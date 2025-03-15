@@ -172,3 +172,24 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# VS Code
+.vscode/
+
+# Data files that are too large for git
+*.tif
+*.tiff
+*.nc
+*.h5
+*.hdf
+*.hdf5
+*.shp.zip
+*.geojson.zip
+
+# But keep the sample data
+!data/vector/*
+!data/raster/*
+
+# System files
+.DS_Store
+Thumbs.db
