@@ -4,17 +4,13 @@ En esta sección del curso, aprenderás sobre sistemas de referencia geoespacial
 
 ## Contenido
 
-1. **01_sistemas_referencia_1.py**: Sistemas de referencia geoespacial - Parte 1
-2. **02_sistemas_referencia_2.py**: Sistemas de referencia geoespacial y definición de SIG - Parte 2
-3. **03_sistemas_referencia_3.py**: Sistemas de referencia y datos geográficos - Parte 3
-4. **04_sig_webmapping.py**: Definición de SIG, Web Mapping (geoportal CONAF)
-5. **05_datos_geograficos.py**: Definición de datos geográficos, mapas temáticos y representación
-6. **06_ejercicio_datos_geo.py**: Ejercicios prácticos con datos geográficos
-7. **07_datos_vectoriales_1.py**: Definición y conceptos de datos vectoriales
-8. **08_datos_vectoriales_2.py**: Continuación de trabajo con datos vectoriales
-9. **09_analisis_espacial_intro.py**: Introducción al análisis espacial
-10. **10_analisis_espacial_avanz.py**: Análisis espacial con operadores de atributo y geométricos
-11. **11_aplicaciones_recursos.py**: Aplicaciones en recursos naturales
+1. **01_sistemas_referencia.py**: Sistemas de referencia geoespacial
+2. **02_sig_webmapping.py**: Definición de SIG, Web Mapping (geoportal CONAF)
+3. **03_datos_geograficos.py**: Definición de datos geográficos, mapas temáticos y representación
+4. **04_ejercicio_datos_geo.py**: Ejercicios prácticos con datos geográficos
+5. **05_datos_vectoriales.py**: Datos vectoriales (puntos, líneas, polígonos)
+6. **06_analisis_espacial.py**: Análisis espacial (intro, operadores)
+7. **07_aplicaciones_recursos.py**: Aplicaciones en recursos naturales
 
 ## Temas cubiertos
 
@@ -30,10 +26,18 @@ En esta sección del curso, aprenderás sobre sistemas de referencia geoespacial
 * Visualización de datos geoespaciales con Folium
 * Casos de estudio en recursos naturales
 
+## Enfoque de consolidación
+
+Los cuadernos han sido consolidados por temas para proporcionar una experiencia de aprendizaje más coherente. Por ejemplo, los tres cuadernos originales sobre sistemas de referencia geoespacial se han unificado en uno solo. Si algún cuaderno resulta demasiado extenso, podrá dividirse en el futuro según sea necesario.
+
 ## Datos de ejemplo
 
-Los cuadernos utilizan conjuntos de datos específicos almacenados en la carpeta `data/vector/`. Asegúrate de tener estos datos disponibles antes de ejecutar los cuadernos.
+Los cuadernos utilizan conjuntos de datos específicos almacenados en la carpeta `data/vector/`. Cuando sea posible, se descargarán datos directamente de fuentes públicas para trabajar con información actualizada y real.
+
+## Entorno de trabajo
+
+Estos cuadernos están diseñados para ejecutarse en **Google Colab**. Cada cuaderno incluye celdas de configuración inicial para instalar las bibliotecas necesarias y configurar el entorno adecuadamente.
 
 ## Proceso de aprendizaje
 
-Se recomienda seguir los cuadernos en orden numérico, ya que cada uno se basa en conocimientos adquiridos en los anteriores. Los primeros cuadernos cubren conceptos fundamentales de cartografía y sistemas de referencia, mientras que los siguientes se enfocan en el trabajo práctico con datos vectoriales usando GeoPandas y otras bibliotecas de Python. 
+Se recomienda seguir los cuadernos en orden numérico, ya que cada uno se basa en conocimientos adquiridos en los anteriores. El primer cuaderno cubre conceptos fundamentales de cartografía y sistemas de referencia, mientras que los siguientes se enfocan en el trabajo práctico con datos vectoriales usando GeoPandas y otras bibliotecas de Python. 
