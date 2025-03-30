@@ -4,13 +4,14 @@ En esta sección del curso, aprenderás sobre sistemas de referencia geoespacial
 
 ## Contenido
 
-1. **01_sistemas_referencia.py**: Sistemas de referencia geoespacial
-2. **02_sig_webmapping.py**: Definición de SIG, Web Mapping (geoportal CONAF)
-3. **03_datos_geograficos.py**: Definición de datos geográficos, mapas temáticos y representación
-4. **04_ejercicio_datos_geo.py**: Ejercicios prácticos con datos geográficos
-5. **05_datos_vectoriales.py**: Datos vectoriales (puntos, líneas, polígonos)
-6. **06_analisis_espacial.py**: Análisis espacial (intro, operadores)
-7. **07_aplicaciones_recursos.py**: Aplicaciones en recursos naturales
+1. **01_introduccion_datos_vectoriales.py**: Introducción a los datos vectoriales
+2. **02_sistemas_referencia.py**: Sistemas de referencia geoespacial
+3. **03_sig_webmapping.py**: Definición de SIG, Web Mapping (geoportal CONAF)
+4. **04_datos_geograficos.py**: Definición de datos geográficos, mapas temáticos y representación
+5. **05_ejercicio_datos_geograficos.py**: Ejercicios prácticos con datos geográficos
+6. **06_datos_vectoriales.py**: Datos vectoriales (puntos, líneas, polígonos)
+7. **07_analisis_espacial.py**: Análisis espacial (intro, operadores)
+8. **08_aplicaciones_recursos.py**: Aplicaciones en recursos naturales
 
 ## Temas cubiertos
 
