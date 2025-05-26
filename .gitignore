@@ -193,3 +193,8 @@ cython_debug/
 # System files
 .DS_Store
 Thumbs.db
+
+# Google Drive sync credentials and config (DO NOT COMMIT)
+credentials.json
+token.pickle
+gdrive_config.json

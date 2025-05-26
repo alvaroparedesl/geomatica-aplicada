@@ -19,6 +19,59 @@ Este curso está diseñado para llevarte desde los conceptos básicos hasta apli
 
 Los cuadernos de este curso están optimizados para ejecutarse en **Google Colab**, lo que permite trabajar directamente en tu navegador sin necesidad de instalar software adicional. Cada cuaderno incluye las instrucciones necesarias para configurar el entorno de trabajo.
 
+### 🔄 Sincronización con Google Drive
+
+Este repositorio incluye una herramienta para sincronizar automáticamente los notebooks con Google Drive, facilitando su uso en Google Colab:
+
+```bash
+# Configuración inicial (solo una vez)
+./sync_to_gdrive.sh setup
+
+# Forzar renovación de credenciales
+./sync_to_gdrive.sh setup --force-refresh
+
+# Ver estado de configuración
+./sync_to_gdrive.sh status
+
+# Reconfigurar carpeta de destino
+./sync_to_gdrive.sh config
+
+# Resetear credenciales almacenadas
+./sync_to_gdrive.sh reset
+
+# Sincronizar todos los notebooks
+./sync_to_gdrive.sh sync --all
+
+# Sincronizar carpeta específica
+./sync_to_gdrive.sh sync --folder notebooks/01_vector
+
+# Sincronizar archivo específico
+./sync_to_gdrive.sh sync --file notebooks/01_vector/01_introduccion_datos_vectoriales.py
+
+# Vista previa (sin subir archivos)
+./sync_to_gdrive.sh sync --all --dry-run
+```
+
+**Características:**
+- ✅ Convierte automáticamente archivos `.py` (Jupytext) a `.ipynb` 
+- ✅ Mantiene la estructura de carpetas en Google Drive
+- ✅ Solo actualiza archivos modificados (eficiente)
+- ✅ Configuración de credenciales guiada
+- ✅ Soporte para carpetas existentes usando ID de carpeta
+- ✅ Configuración persistente y reutilizable
+- ✅ Gestión inteligente de credenciales (reutiliza tokens válidos)
+- ✅ Opciones para renovar o resetear credenciales
+- ✅ Compatible con Google Colab
+
+**Requisitos para la sincronización:**
+```bash
+pip install -r requirements-sync.txt
+```
+
+Los archivos se subirán a una carpeta llamada `Geomatica-Aplicada-Notebooks` en tu Google Drive, manteniendo la misma estructura del repositorio.
+
+> 📖 **Guía detallada de configuración**: Para instrucciones paso a paso sobre cómo configurar las credenciales de Google Drive y usar todas las funciones del script, consulta [SYNC_SETUP.md](SYNC_SETUP.md).
+
 ## 📁 Estructura del Repositorio
 
 ```
