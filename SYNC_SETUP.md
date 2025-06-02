@@ -153,9 +153,9 @@ If you want to use an existing folder in Google Drive:
 2. Navigate to the folder you want to use
 3. Look at the URL in the address bar:
    ```
-   https://drive.google.com/drive/folders/1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74mMjoeqXVE
+   https://drive.google.com/drive/folders/1BxiMVs0XRA5n54654gdBZjgmUUqptlbs74mMjoeqXVE
    ```
-4. The folder ID is the long string after `folders/`: `1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74mMjoeqXVE`
+4. The folder ID is the long string after `folders/`: `1BxiMVs0XRA5n54654gdBZjgmUUqptlbs74mMjoeqXVE`
 
 ### Configuration Options
 

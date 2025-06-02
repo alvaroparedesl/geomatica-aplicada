@@ -639,34 +639,83 @@ class GoogleDriveSync:
             filename = os.path.basename(local_path)
 
         try:
-            # Check if file already exists
+            # First, check if file already exists in the target folder
             query = f"name='{filename}' and '{gdrive_folder_id}' in parents"
             results = (
                 self.service.files()
-                .list(q=query, supportsAllDrives=True, includeItemsFromAllDrives=True)
+                .list(
+                    q=query,
+                    fields="files(id,name,parents)",
+                    supportsAllDrives=True,
+                    includeItemsFromAllDrives=True,
+                )
                 .execute()
             )
             items = results.get("files", [])
 
-            file_metadata = {"name": filename, "parents": [gdrive_folder_id]}
+            # If not found in target folder, search by name only
+            if not items:
+                query_by_name = f"name='{filename}'"
+                results_by_name = (
+                    self.service.files()
+                    .list(
+                        q=query_by_name,
+                        fields="files(id,name,parents)",
+                        supportsAllDrives=True,
+                        includeItemsFromAllDrives=True,
+                    )
+                    .execute()
+                )
+                items_by_name = results_by_name.get("files", [])
+
+                if items_by_name:
+                    # File exists elsewhere, we'll update and move it
+                    items = items_by_name
+                    print(
+                        f"📁 Found {filename} in different folder, will move and update"
+                    )
+
             media = MediaFileUpload(local_path, resumable=True)
 
             if items:
                 # Update existing file
                 file_id = items[0]["id"]
-                file = (
-                    self.service.files()
-                    .update(
-                        fileId=file_id,
-                        body=file_metadata,
-                        media_body=media,
-                        supportsAllDrives=True,
+                existing_parents = items[0].get("parents", [])
+
+                # For updates, don't include parents in body
+                file_metadata = {"name": filename}
+
+                # Check if we need to move the file to a different folder
+                if gdrive_folder_id not in existing_parents:
+                    # File needs to be moved to the target folder
+                    file = (
+                        self.service.files()
+                        .update(
+                            fileId=file_id,
+                            body=file_metadata,
+                            media_body=media,
+                            addParents=gdrive_folder_id,
+                            removeParents=",".join(existing_parents),
+                            supportsAllDrives=True,
+                        )
+                        .execute()
                     )
-                    .execute()
-                )
+                else:
+                    # File is already in the correct folder, just update content
+                    file = (
+                        self.service.files()
+                        .update(
+                            fileId=file_id,
+                            body=file_metadata,
+                            media_body=media,
+                            supportsAllDrives=True,
+                        )
+                        .execute()
+                    )
                 print(f"✓ Updated: {filename}")
             else:
-                # Create new file
+                # Create new file - parents field is allowed here
+                file_metadata = {"name": filename, "parents": [gdrive_folder_id]}
                 file = (
                     self.service.files()
                     .create(
@@ -844,6 +893,14 @@ def main():
     # Debug command
     debug_parser = subparsers.add_parser("debug", help="Debug shared drive access")
 
+    # Test command
+    test_parser = subparsers.add_parser(
+        "test", help="Test file upload/update functionality"
+    )
+    test_parser.add_argument(
+        "--file", type=str, required=True, help="Test file to upload"
+    )
+
     # Sync command
     sync_parser = subparsers.add_parser("sync", help="Sync notebooks to Google Drive")
     sync_group = sync_parser.add_mutually_exclusive_group(required=True)
@@ -892,6 +949,43 @@ def main():
         print(f"\nTesting access to folder: {folder_id}")
         result = syncer.test_folder_access(folder_id)
         print(f"Result: {result}")
+
+    elif args.command == "test":
+        if not syncer.authenticate():
+            print("Please run 'setup' first to configure credentials")
+            return
+
+        if not syncer.setup_folder_structure():
+            print("Failed to setup folder structure")
+            return
+
+        test_file = args.file
+        if not os.path.exists(test_file):
+            print(f"Error: Test file '{test_file}' does not exist")
+            return
+
+        print(f"Testing upload/update of: {test_file}")
+
+        # Convert if it's a .py file
+        if test_file.endswith(".py"):
+            ipynb_file = syncer.convert_py_to_ipynb(test_file, force=True)
+            if not ipynb_file:
+                print("Failed to convert file")
+                return
+            upload_file = ipynb_file
+        else:
+            upload_file = test_file
+
+        # Test upload
+        folder_id = syncer.create_gdrive_folder_structure(
+            test_file, syncer.gdrive_folder_id
+        )
+        success = syncer.upload_file(upload_file, folder_id)
+
+        if success:
+            print("✓ Test successful!")
+        else:
+            print("✗ Test failed!")
 
     elif args.command == "sync":
         paths = []
