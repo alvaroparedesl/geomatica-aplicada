@@ -1,4 +1,4 @@
-# Análisis de Datos Raster y Teledetección
+# Notebooks de Análisis Raster
 
 Este directorio contiene los notebooks relacionados con el análisis de datos raster y teledetección.
 
@@ -8,29 +8,37 @@ Este directorio contiene los notebooks relacionados con el análisis de datos ra
    - Conceptos básicos de datos raster
    - Estructura y propiedades
    - Manipulación con rioxarray y xarray
-   - Operaciones básicas con rasters
+   - Visualización básica
 
-2. `02_intro_teledeteccion.py`: Introducción a la Teledetección
-   - Principios físicos
+2. `02_intro_teledeteccion.py`: Introducción a la teledetección
+   - Principios básicos de teledetección
    - Sensores y plataformas
    - Resolución espacial, espectral, radiométrica y temporal
+   - Aplicaciones en recursos naturales
 
-3. `03_acceso_imagenes.py`: Acceso a Imágenes Satelitales
-   - Trabajo con pySTAC y Planetary Computer
-   - Acceso a datos Landsat y Sentinel-2
-   - Visualización básica de imágenes
-   - Comparación entre sensores
+3. `03_acceso_imagenes.py`: Acceso a imágenes satelitales
+   - Trabajo con Microsoft Planetary Computer
+   - Acceso a datos Sentinel-2 y Landsat
+   - Visualización de bandas espectrales
+   - Manipulación básica de imágenes
 
-Los siguientes notebooks (04-07) cubrirán:
-- Características y estadísticas de imágenes
-- Tratamiento y visualización avanzada
-- Índices de vegetación
-- Análisis multitemporal
+## Próximos notebooks
+
+4. Características y estadísticas de imágenes
+5. Tratamiento y visualización avanzada
+6. Índices de vegetación
+7. Análisis multitemporal
 
 ## Requisitos
 
-Cada notebook incluye las instrucciones para instalar las dependencias necesarias en Google Colab.
+Cada notebook incluye las instrucciones necesarias para instalar las dependencias requeridas en Google Colab.
 
 ## Datos
 
-Los datos de ejemplo se encuentran en el directorio `data/raster/`. 
+Los datos de ejemplo se acceden principalmente a través de Microsoft Planetary Computer, evitando la necesidad de descargar grandes archivos localmente.
+
+## Referencias
+
+* [Documentación de rioxarray](https://corteva.github.io/rioxarray/stable/)
+* [Microsoft Planetary Computer](https://planetarycomputer.microsoft.com/)
+* [Documentación de xarray](https://docs.xarray.dev/en/stable/) 
