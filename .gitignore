@@ -190,6 +190,14 @@ cython_debug/
 !data/vector/*
 !data/raster/*
 
+# GDAL sidecar files
+*.aux.xml
+
+# R session files
+.Rhistory
+.RData
+.Rproj.user/
+
 # System files
 .DS_Store
 Thumbs.db
