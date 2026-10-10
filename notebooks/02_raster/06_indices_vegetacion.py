@@ -1,6 +1,8 @@
 # %% [markdown]
 # # Índices de Vegetación y Álgebra de Imágenes
 #
+# [![Abrir en Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/alvaroparedesl/geomatica-aplicada/blob/main/notebooks/02_raster/06_indices_vegetacion.ipynb) [![Licencia: GPL-3.0](https://img.shields.io/badge/licencia-GPL--3.0-blue.svg)](https://github.com/alvaroparedesl/geomatica-aplicada/blob/main/LICENSE) [![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://colab.research.google.com/) [![Último commit](https://img.shields.io/github/last-commit/alvaroparedesl/geomatica-aplicada?label=%C3%BAltimo%20commit)](https://github.com/alvaroparedesl/geomatica-aplicada/commits/main)
+#
 # En este cuaderno aprenderemos a calcular índices de vegetación utilizando álgebra de imágenes
 # con datos de Landsat y Sentinel-2. Trabajaremos con **configuración modular** que permite
 # cambiar fácilmente el sensor, área de estudio, resolución y período temporal.
@@ -17,38 +19,56 @@
 
 # %% [markdown]
 # ## Configuración del entorno
+#
+# Primero preparamos el entorno: la celda `Preparar entorno` deja disponible la carpeta `utils/` del curso, donde guardamos funciones de apoyo (buscar y cargar imágenes, convertir a reflectancia, calcular índices, mostrar paneles, etc.).
+
+# %%
+# @title Preparar entorno (ejecutar primero)
+import subprocess
+import sys
+from pathlib import Path
+
+if "google.colab" in sys.modules:  # Colab: clonar el repositorio (solo la primera vez)
+    RAIZ = Path("/content/geomatica-aplicada")
+    if not RAIZ.exists():
+        subprocess.run(["git", "clone", "-q", "--depth", "1",
+                        "https://github.com/alvaroparedesl/geomatica-aplicada", str(RAIZ)], check=True)
+else:  # Local: subir desde la carpeta actual hasta encontrar utils/
+    RAIZ = next(p for p in [Path.cwd(), *Path.cwd().parents] if (p / "utils").is_dir())
+sys.path.insert(0, str(RAIZ))
 
 # %%
 # @title Instalación de paquetes necesarios
-# %pip install rioxarray xarray matplotlib numpy rasterio geopandas planetary-computer pystac-client odc-stac plotly
+# %pip install -q rioxarray xarray matplotlib numpy rasterio geopandas planetary-computer pystac-client odc-stac plotly
 
 # %%
 # @title Importación de bibliotecas
-import matplotlib.pyplot as plt
 import numpy as np
 import odc.stac
 import pandas as pd
-import planetary_computer
 import plotly.express as px
 import plotly.graph_objects as go
 import xarray as xr
-from pystac_client import Client
 
-# Configuración para visualización
-plt.rcParams["figure.figsize"] = (12, 8)
-plt.style.use("ggplot")
-
-# Configuración para Colab
-
-try:
-    # Verificamos si estamos en Colab
-    import google.colab
-
-    IN_COLAB = True
-    print("🔧 Configurado para Google Colab")
-except ImportError:
-    IN_COLAB = False
-    print("🔧 Ejecutándose localmente")
+# Funciones de apoyo del curso (carpeta utils/)
+from utils.raster import (
+    calcular_ndvi,
+    calcular_evi,
+    calcular_ndwi,
+    convertir_a_reflectancia,
+    nombres_bandas,
+    obtener_configuracion_sensor,
+)
+from utils.stac import (
+    agregar_offset,
+    conectar_catalogo,
+    parametros_busqueda,
+    parametros_carga,
+    preparar_items,
+    renombrar_bandas,
+    resumir_imagenes,
+)
+from utils.viz import crear_imagen_rgb, mostrar_imagen, mostrar_paneles
 
 print("✅ Bibliotecas importadas exitosamente")
 
@@ -92,364 +112,95 @@ for clave, valor in CONFIG.items():
     print(f"  {clave}: {valor}")
 
 # %% [markdown]
-# ## 2. Funciones Especializadas por Sensor
+# ## 2. Características de cada sensor
 #
-# Cada sensor tiene características diferentes que debemos manejar automáticamente:
+# Cada sensor tiene características diferentes (nombres de bandas, factores de conversión a reflectancia),
+# y las funciones de `utils` las manejan automáticamente según el sensor que elijamos en `CONFIG`:
 #
 # | Aspecto | Sentinel-2 | Landsat 8/9 |
 # |---------|------------|-------------|
 # | **Bandas RGB** | B04, B03, B02 | red, green, blue |
 # | **Banda NIR** | B08 | nir08 |
 # | **Factor reflectancia** | 0.0001 | 0.0000275 |
-# | **Offset** | 0 | -0.2 |
+# | **Offset** | -0.1 o 0, según el baseline de cada imagen (ver abajo) | -0.2 |
 # | **Resolución nativa** | 10m | 30m |
-
+#
+# La conversión a reflectancia es `reflectancia = DN * factor + offset`. En Sentinel-2 el offset no es fijo:
+# es -0.1 en las imágenes con versión de procesamiento (baseline) 04.00 o posterior, introducida el 25 de
+# enero de 2022, y 0 en las anteriores. Depende del catálogo y del baseline de cada imagen, no solo de la
+# fecha; sin el offset correcto, la reflectancia queda sobreestimada en cerca de 0.1 y los índices se
+# distorsionan. Los helpers de `utils.stac` lo resuelven imagen por imagen (lo veremos al cargar los datos).
 
 # %%
-# @title Funciones utilitarias
-def obtener_configuracion_sensor(sensor):
-    """
-    Retorna configuración específica para cada sensor satelital.
+# Obtenemos la configuración del sensor seleccionado (bandas, factores, colección STAC...)
+config_sensor = obtener_configuracion_sensor(CONFIG["sensor"])
 
-    Parámetros:
-    -----------
-    sensor : str
-        Nombre del sensor ('sentinel-2' o 'landsat')
-
-    Retorna:
-    --------
-    dict
-        Diccionario con configuración específica del sensor
-    """
-
-    if sensor == "sentinel-2":
-        return {
-            # Nombres de bandas Sentinel-2
-            "bandas": {
-                "red": "B04",
-                "green": "B03",
-                "blue": "B02",
-                "nir": "B08",
-                "swir1": "B11",
-                "swir2": "B12",
-                "red_edge1": "B05",
-            },
-            "rgb_bandas": ["B04", "B03", "B02"],
-            "falso_color": ["B08", "B04", "B03"],  # NIR, Red, Green
-            # Parámetros de conversión a reflectancia
-            "factor_reflectancia": 0.0001,
-            "offset": 0.0,
-            "rango_valido": (0, 1),
-            # Configuración de búsqueda
-            "coleccion": "sentinel-2-l2a",
-            "plataforma_filtro": None,
-            # Información para el estudiante
-            "descripcion": "Sentinel-2 L2A (ESA) - Resolución 10m",
-        }
-
-    elif sensor == "landsat":
-        return {
-            # Nombres de bandas Landsat
-            "bandas": {
-                "red": "red",
-                "green": "green",
-                "blue": "blue",
-                "nir": "nir08",
-                "swir1": "swir16",
-                "swir2": "swir22",
-            },
-            "rgb_bandas": ["red", "green", "blue"],
-            "falso_color": ["nir08", "red", "green"],
-            # Parámetros de conversión a reflectancia (Collection 2)
-            "factor_reflectancia": 0.0000275,
-            "offset": -0.2,
-            "rango_valido": (0, 1),
-            # Configuración de búsqueda
-            "coleccion": "landsat-c2-l2",
-            "plataforma_filtro": ["landsat-8", "landsat-9"],
-            # Información para el estudiante
-            "descripcion": "Landsat 8/9 Collection 2 L2 (USGS) - Resolución 30m",
-        }
-    else:
-        raise ValueError(
-            f"Sensor '{sensor}' no soportado. Use 'sentinel-2' o 'landsat'"
-        )
-
-
-def convertir_a_reflectancia(imagen, config_sensor):
-    """
-    Convierte números digitales a reflectancia según el sensor.
-
-    Parámetros:
-    -----------
-    imagen : xarray.Dataset
-        Dataset con las bandas espectrales
-    config_sensor : dict
-        Configuración específica del sensor
-
-    Retorna:
-    --------
-    xarray.Dataset
-        Dataset con valores de reflectancia validados
-    """
-
-    # Aplicamos la fórmula específica del sensor
-    factor = config_sensor["factor_reflectancia"]
-    offset = config_sensor["offset"]
-
-    # Conversión: reflectancia = (DN * factor) + offset
-    imagen_refl = imagen * factor + offset
-
-    # Validamos rangos de reflectancia
-    rango_min, rango_max = config_sensor["rango_valido"]
-    imagen_refl = imagen_refl.where(
-        (imagen_refl >= rango_min) & (imagen_refl <= rango_max)
-    )
-
-    print("🔄 Conversión a reflectancia completada:")
-    print(f"   Factor: {factor}, Offset: {offset}")
-    print(f"   Rango válido: {rango_min} - {rango_max}")
-
-    return imagen_refl
-
-
-def calcular_ndvi(imagen, config_sensor):
-    """
-    Calcula el NDVI (Normalized Difference Vegetation Index).
-
-    NDVI = (NIR - RED) / (NIR + RED)
-
-    Parámetros:
-    -----------
-    imagen : xarray.Dataset
-        Dataset con bandas espectrales
-    config_sensor : dict
-        Configuración del sensor
-
-    Retorna:
-    --------
-    xarray.DataArray
-        NDVI calculado (-1 a +1)
-    """
-    bandas = config_sensor["bandas"]
-    nir = imagen[bandas["nir"]]
-    red = imagen[bandas["red"]]
-
-    # Evitamos división por cero
-    denominador = nir + red
-    ndvi = xr.where(denominador != 0, (nir - red) / denominador, np.nan)
-
-    # Validamos rango: valores fuera de [-1, 1] se convierten a NaN
-    ndvi = xr.where((ndvi >= -1) & (ndvi <= 1), ndvi, np.nan)
-
-    # Añadimos metadatos
-    ndvi.name = "NDVI"
-    ndvi.attrs = {
-        "long_name": "Normalized Difference Vegetation Index",
-        "formula": "(NIR - RED) / (NIR + RED)",
-        "range": "-1 to +1",
-    }
-
-    return ndvi
-
-
-def calcular_evi(imagen, config_sensor):
-    """
-    Calcula el EVI (Enhanced Vegetation Index).
-
-    EVI = 2.5 * ((NIR - RED) / (NIR + 6*RED - 7.5*BLUE + 1))
-
-    Parámetros:
-    -----------
-    imagen : xarray.Dataset
-        Dataset con bandas espectrales
-    config_sensor : dict
-        Configuración del sensor
-
-    Retorna:
-    --------
-    xarray.DataArray
-        EVI calculado
-    """
-    bandas = config_sensor["bandas"]
-    nir = imagen[bandas["nir"]]
-    red = imagen[bandas["red"]]
-    blue = imagen[bandas["blue"]]
-
-    # Fórmula EVI
-    denominador = nir + 6 * red - 7.5 * blue + 1
-    evi = xr.where(denominador != 0, 2.5 * (nir - red) / denominador, np.nan)
-
-    # Validamos rango: valores fuera de [-1, 1] se convierten a NaN
-    evi = xr.where((evi >= -1) & (evi <= 1), evi, np.nan)
-
-    # Añadimos metadatos
-    evi.name = "EVI"
-    evi.attrs = {
-        "long_name": "Enhanced Vegetation Index",
-        "formula": "2.5 * ((NIR - RED) / (NIR + 6*RED - 7.5*BLUE + 1))",
-        "range": "-1 to +1",
-    }
-
-    return evi
-
-
-def calcular_ndwi(imagen, config_sensor):
-    """
-    Calcula el NDWI (Normalized Difference Water Index).
-
-    NDWI = (NIR - SWIR1) / (NIR + SWIR1)
-
-    Parámetros:
-    -----------
-    imagen : xarray.Dataset
-        Dataset con bandas espectrales
-    config_sensor : dict
-        Configuración del sensor
-
-    Retorna:
-    --------
-    xarray.DataArray
-        NDWI calculado
-    """
-    bandas = config_sensor["bandas"]
-    nir = imagen[bandas["nir"]]
-    swir1 = imagen[bandas["swir1"]]
-
-    # Fórmula NDWI
-    denominador = nir + swir1
-    ndwi = xr.where(denominador != 0, (nir - swir1) / denominador, np.nan)
-
-    # Validamos rango: valores fuera de [-1, 1] se convierten a NaN
-    ndwi = xr.where((ndwi >= -1) & (ndwi <= 1), ndwi, np.nan)
-
-    # Añadimos metadatos
-    ndwi.name = "NDWI"
-    ndwi.attrs = {
-        "long_name": "Normalized Difference Water Index",
-        "formula": "(NIR - SWIR1) / (NIR + SWIR1)",
-        "range": "-1 to +1",
-    }
-
-    return ndwi
-
-
-def crear_imagen_rgb(dataset, bandas_rgb, factor_brillo=3.0):
-    """
-    Crea una imagen RGB lista para visualización.
-
-    Parámetros:
-    -----------
-    dataset : xarray.Dataset
-        Dataset con las bandas espectrales
-    bandas_rgb : list
-        Lista con nombres de bandas [R, G, B]
-    factor_brillo : float
-        Factor para mejorar el brillo de la imagen
-
-    Retorna:
-    --------
-    numpy.ndarray
-        Array RGB normalizado para visualización
-    """
-    # Extraemos las bandas RGB
-    rgb_data = []
-    for banda in bandas_rgb:
-        rgb_data.append(dataset[banda].values)
-
-    # Apilamos las bandas (y, x, bandas)
-    rgb = np.stack(rgb_data, axis=2)
-
-    # Aplicamos factor de brillo y normalizamos
-    rgb_enhanced = np.clip(rgb * factor_brillo, 0, 1)
-
-    return rgb_enhanced
-
-
-print("🔧 Funciones utilitarias creadas exitosamente")
+print(f"🛰️ Trabajando con: {config_sensor['descripcion']}")
+print(f"   Colección: {config_sensor['coleccion']}")
+print(f"   Reflectancia = DN * {config_sensor['factor_reflectancia']} + offset (offset de referencia: {config_sensor['offset']})")
+print(f"   Bandas: {config_sensor['bandas']}")
 
 # %% [markdown]
 # ## 3. Búsqueda y Carga de Datos
 #
 # Ahora cargaremos imágenes satelitales usando la configuración definida.
 
-# %%
-# Obtenemos la configuración del sensor seleccionado
-config_sensor = obtener_configuracion_sensor(CONFIG["sensor"])
-
-print(f"🛰️ Trabajando con: {config_sensor['descripcion']}")
-print(f"   Colección: {config_sensor['coleccion']}")
+# %% [markdown]
+# El flujo usa las llamadas nativas de `pystac_client` y `odc.stac`; los helpers de `utils.stac` solo arman
+# sus argumentos (`parametros_busqueda`, `parametros_carga`) y ordenan los datos (`preparar_items`,
+# `renombrar_bandas`, `agregar_offset`).
 
 # %%
-# Conectamos al catálogo STAC de Planetary Computer
-catalog = Client.open(
-    "https://planetarycomputer.microsoft.com/api/stac/v1",
-    modifier=planetary_computer.sign_inplace,
+# Conectamos al catálogo STAC. Landsat solo existe en Planetary Computer; Sentinel-2 usa el catálogo
+# por defecto del curso (`CATALOGO_SENTINEL2` en utils/stac.py).
+catalog = conectar_catalogo("planetary" if CONFIG["sensor"] == "landsat" else None)
+
+# Buscamos imágenes del sensor elegido (búsqueda nativa con los parámetros armados por el helper)
+parametros = parametros_busqueda(
+    CONFIG["sensor"],
+    CONFIG["bbox"],
+    (CONFIG["fecha_inicio"], CONFIG["fecha_fin"]),
+    nubes_max=CONFIG["max_nubes"],
+    catalogo=catalog,
 )
+busqueda = catalog.search(**parametros)
+items = busqueda.item_collection()
 
-# Configuramos la búsqueda según el sensor
-query_params = {
-    "collections": [config_sensor["coleccion"]],
-    "bbox": CONFIG["bbox"],
-    "datetime": f"{CONFIG['fecha_inicio']}/{CONFIG['fecha_fin']}",
-    "query": {"eo:cloud_cover": {"lt": CONFIG["max_nubes"]}},
-}
+# Quitamos versiones repetidas de una misma toma (Sentinel-2) y ordenamos por fecha
+items = preparar_items(items)
 
-# Filtro adicional para Landsat (plataforma específica)
-if config_sensor["plataforma_filtro"]:
-    query_params["query"]["platform"] = {"in": config_sensor["plataforma_filtro"]}
-
-# Realizamos la búsqueda
-search = catalog.search(**query_params)
-items = list(search.items())
-
-print("🔍 Búsqueda completada:")
-print(f"   Imágenes encontradas: {len(items)}")
-
-if len(items) == 0:
-    print("❌ No se encontraron imágenes. Intenta:")
-    print("   - Ampliar el rango de fechas")
-    print("   - Aumentar el porcentaje máximo de nubes")
-    print("   - Cambiar el área de estudio")
-else:
-    # Información de la primera imagen
-    item = items[0]
-    print("\n📅 Primera imagen disponible:")
-    print(f"   Fecha: {item.datetime.strftime('%Y-%m-%d')}")
-    print(f"   Cobertura de nubes: {item.properties['eo:cloud_cover']:.1f}%")
-    print(f"   ID: {item.id}")
+# Tabla con fecha, % de nubes e identificador de cada imagen (en Sentinel-2, también baseline y offset)
+resumir_imagenes(items)
 
 # %%
-# Definimos las bandas necesarias para el análisis
-bandas_requeridas = [
-    config_sensor["bandas"]["red"],
-    config_sensor["bandas"]["green"],
-    config_sensor["bandas"]["blue"],
-    config_sensor["bandas"]["nir"],
-    config_sensor["bandas"]["swir1"],
-]
+# Definimos las bandas necesarias para el análisis (nombres genéricos -> nombres del sensor)
+bandas_requeridas = nombres_bandas(CONFIG["sensor"], ["red", "green", "blue", "nir", "swir1"])
 
 print(f"🎯 Bandas a cargar: {bandas_requeridas}")
 
-# Configuramos parámetros de carga
-load_params = {
-    "items": items,
-    "bands": bandas_requeridas,
-    "bbox": CONFIG["bbox"],
-    "crs": CONFIG["epsg"],
-    "resolution": CONFIG["resolucion"],
-    "groupby": "solar_day",
-}
-
-# IMPORTANTE: Sin chunks para cargar todo en memoria
-if not CONFIG["cargar_en_memoria"]:
-    load_params["chunks"] = {"x": 1024, "y": 1024}
-    print("📦 Cargando con chunks para optimizar memoria")
-else:
+# IMPORTANTE: Sin chunks se carga todo en memoria
+if CONFIG["cargar_en_memoria"]:
+    chunks = None
     print("🧠 Cargando completamente en memoria")
+else:
+    chunks = {"x": 1024, "y": 1024}
+    print("📦 Cargando con chunks para optimizar memoria")
 
-# Cargamos los datos
-ds = odc.stac.load(**load_params)
+# Cargamos los datos con la llamada nativa de odc.stac; `parametros_carga` arma los argumentos
+parametros_ds = parametros_carga(
+    CONFIG["sensor"],
+    bandas_requeridas,
+    resolucion=CONFIG["resolucion"],
+    crs=CONFIG["epsg"],
+    catalogo=catalog,
+    bbox=CONFIG["bbox"],
+    chunks=chunks,
+)
+ds = odc.stac.load(items, **parametros_ds)
+
+# Nombres de banda estándar y offset de reflectancia de cada fecha (Landsat queda igual)
+ds = renombrar_bandas(ds, catalogo=catalog)
+ds = agregar_offset(ds, items)
 
 print("\n📊 Dataset cargado:")
 print(f"   Dimensiones: {dict(ds.sizes)}")
@@ -462,15 +213,15 @@ fecha_seleccionada = ds.time[0]
 imagen_original = ds.sel(time=fecha_seleccionada)
 
 print("🖼️ Imagen seleccionada para análisis:")
-print(f"   Fecha: {fecha_seleccionada.values}")
+print(f"   Fecha: {str(fecha_seleccionada.values)[:10]}")
 print(f"   Dimensiones: {imagen_original.sizes['y']} x {imagen_original.sizes['x']}")
 
 # %% [markdown]
 # ## 4. Conversión a Reflectancia y Visualización RGB
 
 # %%
-# Convertimos a reflectancia usando la función específica del sensor
-imagen_refl = convertir_a_reflectancia(imagen_original, config_sensor)
+# Convertimos a reflectancia (DN * factor + offset de cada imagen; descarta valores fuera de 0 a 1)
+imagen_refl = convertir_a_reflectancia(imagen_original, CONFIG["sensor"])
 
 # Verificamos rangos de reflectancia por banda
 print("\n📈 Rangos de reflectancia por banda:")
@@ -491,55 +242,27 @@ for banda in bandas_requeridas:
 # Visualizamos la imagen RGB (color verdadero)
 rgb_image = crear_imagen_rgb(imagen_refl, config_sensor["rgb_bandas"])
 
-plt.figure(figsize=(15, 10))
-plt.imshow(rgb_image)
-plt.title(
-    f"Imagen {config_sensor['descripcion']} - Color Verdadero (RGB)\n"
-    f"Fecha: {fecha_seleccionada.values} | Resolución: {CONFIG['resolucion']}m",
-    fontsize=14,
-)
-plt.axis("off")
-
-# Añadimos información de las bandas
 bandas_info = " | ".join(
     [f"{b}: {config_sensor['bandas'][b]}" for b in ["red", "green", "blue"]]
 )
-plt.figtext(
-    0.5,
-    0.02,
+mostrar_imagen(
+    rgb_image,
+    f"Imagen {config_sensor['descripcion']} - Color Verdadero (RGB)\n"
+    f"Fecha: {str(fecha_seleccionada.values)[:10]} | Resolución: {CONFIG['resolucion']}m\n"
     f"Bandas utilizadas: {bandas_info}",
-    ha="center",
-    fontsize=10,
-    style="italic",
 )
-plt.tight_layout()
-plt.show()
 
 # %%
 # Visualizamos imagen en falso color (NIR-R-G)
 falso_color_image = crear_imagen_rgb(imagen_refl, config_sensor["falso_color"])
 
-plt.figure(figsize=(15, 10))
-plt.imshow(falso_color_image)
-plt.title(
+mostrar_imagen(
+    falso_color_image,
     f"Imagen {config_sensor['descripcion']} - Falso Color (NIR-R-G)\n"
-    f"La vegetación aparece en tonos rojos",
-    fontsize=14,
+    "La vegetación aparece en tonos rojos",
 )
-plt.axis("off")
 
-# Información sobre falso color
-plt.figtext(
-    0.5,
-    0.02,
-    "💡 En falso color: Vegetación = Rojo | Agua = Negro/Azul | Suelo = Marrón",
-    ha="center",
-    fontsize=11,
-    style="italic",
-    bbox=dict(boxstyle="round,pad=0.3", facecolor="lightblue", alpha=0.7),
-)
-plt.tight_layout()
-plt.show()
+print("💡 En falso color: Vegetación = Rojo | Agua = Negro/Azul | Suelo = Marrón")
 
 # %% [markdown]
 # ## 5. Álgebra de Imágenes: Fundamentos Teóricos y Prácticos
@@ -600,37 +323,19 @@ print(
 
 # %%
 # Visualizamos las operaciones aritméticas
-fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-fig.suptitle(
-    "Álgebra de Imágenes: Operaciones Aritméticas", fontsize=16, fontweight="bold"
+mostrar_paneles(
+    [
+        ("Suma: NIR + RED\n(Energía total reflejada)", suma_nir_red, {"cmap": "viridis"}),
+        ("Resta: NIR - RED\n(Base del NDVI)", diferencia_nir_red, {"cmap": "RdYlGn"}),
+        ("Producto: NIR × RED\n(Interacción espectral)", producto_nir_red, {"cmap": "plasma"}),
+        (
+            "Ratio: NIR ÷ RED\n(Índice espectral simple)",
+            ratio_nir_red,
+            {"cmap": "coolwarm", "vmin": 0, "vmax": 5},
+        ),
+    ],
+    titulo="Álgebra de Imágenes: Operaciones Aritméticas",
 )
-
-# Suma
-im1 = axes[0, 0].imshow(suma_nir_red, cmap="viridis")
-axes[0, 0].set_title("Suma: NIR + RED\n(Energía total reflejada)")
-axes[0, 0].axis("off")
-plt.colorbar(im1, ax=axes[0, 0], fraction=0.046)
-
-# Resta
-im2 = axes[0, 1].imshow(diferencia_nir_red, cmap="RdYlGn")
-axes[0, 1].set_title("Resta: NIR - RED\n(Base del NDVI)")
-axes[0, 1].axis("off")
-plt.colorbar(im2, ax=axes[0, 1], fraction=0.046)
-
-# Multiplicación
-im3 = axes[1, 0].imshow(producto_nir_red, cmap="plasma")
-axes[1, 0].set_title("Producto: NIR × RED\n(Interacción espectral)")
-axes[1, 0].axis("off")
-plt.colorbar(im3, ax=axes[1, 0], fraction=0.046)
-
-# División
-im4 = axes[1, 1].imshow(ratio_nir_red, cmap="coolwarm", vmin=0, vmax=5)
-axes[1, 1].set_title("Ratio: NIR ÷ RED\n(Índice espectral simple)")
-axes[1, 1].axis("off")
-plt.colorbar(im4, ax=axes[1, 1], fraction=0.046)
-
-plt.tight_layout()
-plt.show()
 
 # %% [markdown]
 # ### 5.2 Operadores de Comparación (Lógicos)
@@ -666,51 +371,35 @@ print(
 
 # %%
 # Visualizamos los operadores lógicos
-fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-fig.suptitle(
-    "Álgebra de Imágenes: Operadores Lógicos (Máscaras Binarias)",
-    fontsize=16,
-    fontweight="bold",
+mascara = {"cmap": "RdYlBu_r", "barra": False}
+
+mostrar_paneles(
+    [
+        (
+            f"NIR > 0.3\n(Vegetación vigorosa: {nir_alto.mean().values * 100:.1f}%)",
+            nir_alto,
+            mascara,
+        ),
+        (
+            f"RED < 0.1\n(Baja absorción: {red_bajo.mean().values * 100:.1f}%)",
+            red_bajo,
+            mascara,
+        ),
+        (
+            f"0.2 ≤ NIR ≤ 0.4\n(Vegetación moderada: {nir_medio.mean().values * 100:.1f}%)",
+            nir_medio,
+            mascara,
+        ),
+        (
+            f"(NIR - RED) > 0.1\n(Contraste alto: {diferencia_significativa.mean().values * 100:.1f}%)",
+            diferencia_significativa,
+            mascara,
+        ),
+    ],
+    titulo="Álgebra de Imágenes: Operadores Lógicos (Máscaras Binarias)",
 )
 
-# NIR alto
-axes[0, 0].imshow(nir_alto, cmap="RdYlBu_r")
-axes[0, 0].set_title(
-    f"NIR > 0.3\n(Vegetación vigorosa: {nir_alto.mean().values * 100:.1f}%)"
-)
-axes[0, 0].axis("off")
-
-# RED bajo
-axes[0, 1].imshow(red_bajo, cmap="RdYlBu_r")
-axes[0, 1].set_title(
-    f"RED < 0.1\n(Baja absorción: {red_bajo.mean().values * 100:.1f}%)"
-)
-axes[0, 1].axis("off")
-
-# NIR medio
-axes[1, 0].imshow(nir_medio, cmap="RdYlBu_r")
-axes[1, 0].set_title(
-    f"0.2 ≤ NIR ≤ 0.4\n(Vegetación moderada: {nir_medio.mean().values * 100:.1f}%)"
-)
-axes[1, 0].axis("off")
-
-# Diferencia significativa
-axes[1, 1].imshow(diferencia_significativa, cmap="RdYlBu_r")
-axes[1, 1].set_title(
-    f"(NIR - RED) > 0.1\n(Contraste alto: {diferencia_significativa.mean().values * 100:.1f}%)"
-)
-axes[1, 1].axis("off")
-
-plt.figtext(
-    0.5,
-    0.02,
-    "💡 Azul = False (0) | Rojo = True (1) | Las máscaras binarias filtran datos",
-    ha="center",
-    fontsize=11,
-    style="italic",
-)
-plt.tight_layout()
-plt.show()
+print("💡 Azul = False (0) | Rojo = True (1) | Las máscaras binarias filtran datos")
 
 # %% [markdown]
 # ### 5.3 Operadores Booleanos (AND, OR, NOT)
@@ -738,41 +427,31 @@ print(f"   Vegetación compleja: {vegetacion_compleja.sum().values} píxeles")
 
 # %%
 # Visualizamos operadores booleanos
-fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-fig.suptitle(
-    "Álgebra de Imágenes: Operadores Booleanos", fontsize=16, fontweight="bold"
+mostrar_paneles(
+    [
+        (
+            f"AND: (NIR > 0.3) & (RED < 0.1)\nVegetación óptima: {vegetacion_optima.mean().values * 100:.1f}%",
+            vegetacion_optima,
+            {"cmap": "RdYlGn", "barra": False},
+        ),
+        (
+            f"OR: (NIR > 0.4) | (RED > 0.2)\nReflectancia extrema: {reflectancia_extrema.mean().values * 100:.1f}%",
+            reflectancia_extrema,
+            {"cmap": "RdYlBu_r", "barra": False},
+        ),
+        (
+            f"NOT: ~(NIR > RED)\nNo vegetación: {no_vegetacion.mean().values * 100:.1f}%",
+            no_vegetacion,
+            {"cmap": "RdYlBu", "barra": False},
+        ),
+        (
+            f"Múltiples condiciones\nVegetación específica: {vegetacion_compleja.mean().values * 100:.1f}%",
+            vegetacion_compleja,
+            {"cmap": "Greens", "barra": False},
+        ),
+    ],
+    titulo="Álgebra de Imágenes: Operadores Booleanos",
 )
-
-# AND
-axes[0, 0].imshow(vegetacion_optima, cmap="RdYlGn")
-axes[0, 0].set_title(
-    f"AND: (NIR > 0.3) & (RED < 0.1)\nVegetación óptima: {vegetacion_optima.mean().values * 100:.1f}%"
-)
-axes[0, 0].axis("off")
-
-# OR
-axes[0, 1].imshow(reflectancia_extrema, cmap="RdYlBu_r")
-axes[0, 1].set_title(
-    f"OR: (NIR > 0.4) | (RED > 0.2)\nReflectancia extrema: {reflectancia_extrema.mean().values * 100:.1f}%"
-)
-axes[0, 1].axis("off")
-
-# NOT
-axes[1, 0].imshow(no_vegetacion, cmap="RdYlBu")
-axes[1, 0].set_title(
-    f"NOT: ~(NIR > RED)\nNo vegetación: {no_vegetacion.mean().values * 100:.1f}%"
-)
-axes[1, 0].axis("off")
-
-# Combinación compleja
-axes[1, 1].imshow(vegetacion_compleja, cmap="Greens")
-axes[1, 1].set_title(
-    f"Múltiples condiciones\nVegetación específica: {vegetacion_compleja.mean().values * 100:.1f}%"
-)
-axes[1, 1].axis("off")
-
-plt.tight_layout()
-plt.show()
 
 # %% [markdown]
 # ## 6. Cálculo de Índices de Vegetación
@@ -785,48 +464,59 @@ plt.show()
 # * **NDVI**: Indica vigor y densidad de vegetación
 # * **EVI**: Menos sensible a la saturación en áreas densas
 # * **NDWI**: Detecta contenido de agua en plantas y superficies
+#
+# **Fórmulas:**
+#
+# * **NDVI** = (NIR - ROJO) / (NIR + ROJO)
+# * **EVI** = 2.5 * (NIR - ROJO) / (NIR + 6 * ROJO - 7.5 * AZUL + 1)
+# * **NDWI** = (NIR - SWIR1) / (NIR + SWIR1)
+#
+# Todos son álgebra de imágenes: exactamente las operaciones de la sección anterior.
+
+# %% [markdown]
+# ### 6.1 NDVI "a mano"
+#
+# Con las bandas `nir` y `red` que ya extrajimos, el NDVI es una sola línea:
+
+# %%
+# NDVI manual: (NIR - ROJO) / (NIR + ROJO)
+ndvi_manual = (nir - red) / (nir + red)
+
+print(f"NDVI manual: rango {np.nanmin(ndvi_manual):.3f} - {np.nanmax(ndvi_manual):.3f}")
+
+# %% [markdown]
+# ### 6.2 Índices con funciones
+#
+# Las funciones `calcular_ndvi`, `calcular_evi` y `calcular_ndwi` aplican las fórmulas anteriores eligiendo
+# por nosotros los nombres de banda de cada sensor. Además evitan dividir por cero y descartan (NaN) los
+# valores fuera del rango -1 a 1.
 
 # %%
 # Calculamos los tres índices principales
-ndvi = calcular_ndvi(imagen_refl, config_sensor)
-evi = calcular_evi(imagen_refl, config_sensor)
-ndwi = calcular_ndwi(imagen_refl, config_sensor)
+ndvi = calcular_ndvi(imagen_refl, CONFIG["sensor"])
+evi = calcular_evi(imagen_refl, CONFIG["sensor"])
+ndwi = calcular_ndwi(imagen_refl, CONFIG["sensor"])
 
 print("🌱 Índices de vegetación calculados:")
 print(f"   NDVI: rango {np.nanmin(ndvi):.3f} - {np.nanmax(ndvi):.3f}")
 print(f"   EVI:  rango {np.nanmin(evi):.3f} - {np.nanmax(evi):.3f}")
 print(f"   NDWI: rango {np.nanmin(ndwi):.3f} - {np.nanmax(ndwi):.3f}")
 
+# Comprobamos que la función da lo mismo que nuestro cálculo manual
+diferencia = abs(ndvi - ndvi_manual).max().values
+print(f"\n🔍 Diferencia máxima entre NDVI de la función y NDVI manual: {diferencia:.6f}")
+
 # %%
 # Visualizamos los índices de vegetación
-fig, axes = plt.subplots(2, 2, figsize=(16, 12))
-fig.suptitle("Índices de Vegetación Calculados", fontsize=16, fontweight="bold")
-
-# NDVI
-im1 = axes[0, 0].imshow(ndvi, cmap="RdYlGn", vmin=-0.2, vmax=1)
-axes[0, 0].set_title("NDVI\n(Normalized Difference Vegetation Index)")
-axes[0, 0].axis("off")
-plt.colorbar(im1, ax=axes[0, 0], fraction=0.046)
-
-# EVI
-im2 = axes[0, 1].imshow(evi, cmap="RdYlGn", vmin=-0.2, vmax=1)
-axes[0, 1].set_title("EVI\n(Enhanced Vegetation Index)")
-axes[0, 1].axis("off")
-plt.colorbar(im2, ax=axes[0, 1], fraction=0.046)
-
-# NDWI
-im3 = axes[1, 0].imshow(ndwi, cmap="RdYlBu", vmin=-0.5, vmax=0.5)
-axes[1, 0].set_title("NDWI\n(Normalized Difference Water Index)")
-axes[1, 0].axis("off")
-plt.colorbar(im3, ax=axes[1, 0], fraction=0.046)
-
-# Comparación RGB
-axes[1, 1].imshow(rgb_image)
-axes[1, 1].set_title("RGB Original\n(para comparación)")
-axes[1, 1].axis("off")
-
-plt.tight_layout()
-plt.show()
+mostrar_paneles(
+    [
+        ("NDVI\n(Normalized Difference Vegetation Index)", ndvi, {"cmap": "RdYlGn", "vmin": -0.2, "vmax": 1}),
+        ("EVI\n(Enhanced Vegetation Index)", evi, {"cmap": "RdYlGn", "vmin": -0.2, "vmax": 1}),
+        ("NDWI\n(Normalized Difference Water Index)", ndwi, {"cmap": "RdYlBu", "vmin": -0.5, "vmax": 0.5}),
+        ("RGB Original\n(para comparación)", rgb_image),
+    ],
+    titulo="Índices de Vegetación Calculados",
+)
 
 # %% [markdown]
 # ## 7. Análisis Interactivo

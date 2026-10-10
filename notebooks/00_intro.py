@@ -1,5 +1,22 @@
+# ---
+# jupyter:
+#   jupytext:
+#     formats: py:percent
+#     text_representation:
+#       extension: .py
+#       format_name: percent
+#       format_version: '1.3'
+#       jupytext_version: 1.14.5
+#   kernelspec:
+#     display_name: Python 3
+#     language: python
+#     name: python3
+# ---
+
 # %% [markdown]
 # # Introducción a Jupyter Notebooks y Google Colab
+#
+# [![Abrir en Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/alvaroparedesl/geomatica-aplicada/blob/main/notebooks/00_intro.ipynb) [![Licencia: GPL-3.0](https://img.shields.io/badge/licencia-GPL--3.0-blue.svg)](https://github.com/alvaroparedesl/geomatica-aplicada/blob/main/LICENSE) [![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://colab.research.google.com/) [![Último commit](https://img.shields.io/github/last-commit/alvaroparedesl/geomatica-aplicada?label=%C3%BAltimo%20commit)](https://github.com/alvaroparedesl/geomatica-aplicada/commits/main)
 #
 # Bienvenidos al curso de Geomática Aplicada en Recursos Naturales. Antes de comenzar con el contenido específico, es importante familiarizarse con las herramientas que utilizaremos durante el curso.
 
@@ -97,12 +114,7 @@ print("¡Hola desde Google Colab!")
 # drive.mount('/content/drive')
 
 # %% [markdown]
-# 3. **Clonar repositorios de GitHub**:
-
-# %%
-# Ejemplo de cómo clonar un repositorio (descomenta para usar)
-# !git clone https://github.com/alvaroparedesl/geomatica-aplicada.git
-# %cd geomatica-aplicada
+# 3. **Clonar repositorios de GitHub**: así descargamos las funciones de apoyo del curso (carpeta `utils/`) y los datos de ejemplo. Lo veremos en detalle más abajo, en la sección "Preparar el entorno en cada notebook".
 
 # %% [markdown]
 # #### Instalación de bibliotecas
@@ -111,7 +123,46 @@ print("¡Hola desde Google Colab!")
 
 # %%
 # Ejemplo de instalación de bibliotecas (descomenta para usar)
-# !pip install rioxarray xarray matplotlib numpy rasterio xarray-spatial geopandas
+# %pip install rioxarray xarray matplotlib numpy rasterio xarray-spatial geopandas
+
+# %% [markdown]
+# ## Preparar el entorno en cada notebook
+#
+# Para no repetir en cada cuaderno el mismo código (buscar imágenes satelitales, calcular índices, hacer gráficos...), las funciones comunes del curso están en la carpeta [`utils/`](https://github.com/alvaroparedesl/geomatica-aplicada/tree/main/utils) del repositorio.
+#
+# Por eso los notebooks que usan esas funciones comienzan con una celda que es **siempre la misma** (`Preparar entorno`). Esa celda:
+#
+# * En **Google Colab**: descarga (clona) el repositorio en `/content/geomatica-aplicada`, solo la primera vez de cada sesión.
+# * En **tu computador**: busca la carpeta del repositorio hacia arriba desde donde está el notebook.
+# * En ambos casos deja disponible la variable `RAIZ` (la carpeta del repositorio, útil para llegar a cualquier archivo del repositorio) y permite escribir `from utils... import ...`.
+#
+# Ejecútala antes que cualquier otra celda:
+
+# %%
+# @title Preparar entorno (ejecutar primero)
+import subprocess
+import sys
+from pathlib import Path
+
+if "google.colab" in sys.modules:  # Colab: clonar el repositorio (solo la primera vez)
+    RAIZ = Path("/content/geomatica-aplicada")
+    if not RAIZ.exists():
+        subprocess.run(["git", "clone", "-q", "--depth", "1",
+                        "https://github.com/alvaroparedesl/geomatica-aplicada", str(RAIZ)], check=True)
+else:  # Local: subir desde la carpeta actual hasta encontrar utils/
+    RAIZ = next(p for p in [Path.cwd(), *Path.cwd().parents] if (p / "utils").is_dir())
+sys.path.insert(0, str(RAIZ))
+
+print(f"Repositorio listo en: {RAIZ}")
+
+# %% [markdown]
+# Una vez ejecutada, ya puedes importar las funciones del curso. Por ejemplo, para descargar un mapa de países del mundo y ver sus primeras filas:
+
+# %%
+from utils.vector import descargar_natural_earth
+
+paises = descargar_natural_earth()
+paises[["NAME", "CONTINENT", "POP_EST"]].head()
 
 # %% [markdown]
 # ### Consejos para trabajar con Google Colab
@@ -137,8 +188,8 @@ print("¡Hola desde Google Colab!")
 #
 # Hay varias formas de abrir estos notebooks:
 #
-# 1. **Directamente desde GitHub**: Usa el enlace "Open in Colab" si está disponible
-# 2. **Clonando el repositorio**: Como se muestra en el ejemplo anterior
+# 1. **Directamente desde GitHub**: Usa el botón "Abrir en Colab" que aparece al inicio de cada notebook (y en los README del repositorio)
+# 2. **Clonando el repositorio**: Como hace la celda `Preparar entorno` de cada notebook
 # 3. **Subiendo el archivo**: Desde tu computadora a Colab
 
 # %% [markdown]
@@ -146,8 +197,8 @@ print("¡Hola desde Google Colab!")
 #
 # Este curso está dividido en dos secciones principales:
 #
-# 1. **Análisis de Datos Vectoriales y SIG**: Sistemas de referencia, SIG, datos vectoriales y análisis espacial
-# 2. **Análisis de Datos Raster y Teledetección**: Datos raster, teledetección, procesamiento de imágenes y análisis multitemporal
+# 1. **Análisis de Datos Vectoriales y SIG** (`01_vector`): geometrías con Shapely, GeoPandas y operaciones espaciales
+# 2. **Análisis de Datos Raster y Teledetección** (`02_raster`): datos raster, teledetección, acceso a imágenes satelitales, estadísticas, índices de vegetación y análisis multitemporal
 #
 # Cada sección contiene varios notebooks que cubren temas específicos. Te recomendamos seguirlos en orden numérico para una mejor comprensión.
 

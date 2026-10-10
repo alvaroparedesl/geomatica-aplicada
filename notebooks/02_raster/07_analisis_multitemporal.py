@@ -1,6 +1,8 @@
 # %% [markdown]
 # # Análisis Multitemporal de Índices de Vegetación
 #
+# [![Abrir en Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/alvaroparedesl/geomatica-aplicada/blob/main/notebooks/02_raster/07_analisis_multitemporal.ipynb) [![Licencia: GPL-3.0](https://img.shields.io/badge/licencia-GPL--3.0-blue.svg)](https://github.com/alvaroparedesl/geomatica-aplicada/blob/main/LICENSE) [![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://colab.research.google.com/) [![Último commit](https://img.shields.io/github/last-commit/alvaroparedesl/geomatica-aplicada?label=%C3%BAltimo%20commit)](https://github.com/alvaroparedesl/geomatica-aplicada/commits/main)
+#
 # En este cuaderno aprenderemos a realizar análisis multitemporal de índices de vegetación
 # utilizando series de tiempo de imágenes satelitales. Trabajaremos con **múltiples fechas**
 # para estudiar la evolución temporal de la vegetación.
@@ -17,10 +19,27 @@
 
 # %% [markdown]
 # ## Configuración del entorno
+#
+# Primero preparamos el entorno: la celda `Preparar entorno` deja disponible la carpeta `utils/` del curso, donde guardamos funciones de apoyo (buscar y cargar imágenes, máscara de nubes, índices, series temporales, etc.).
+
+# %%
+# @title Preparar entorno (ejecutar primero)
+import subprocess
+import sys
+from pathlib import Path
+
+if "google.colab" in sys.modules:  # Colab: clonar el repositorio (solo la primera vez)
+    RAIZ = Path("/content/geomatica-aplicada")
+    if not RAIZ.exists():
+        subprocess.run(["git", "clone", "-q", "--depth", "1",
+                        "https://github.com/alvaroparedesl/geomatica-aplicada", str(RAIZ)], check=True)
+else:  # Local: subir desde la carpeta actual hasta encontrar utils/
+    RAIZ = next(p for p in [Path.cwd(), *Path.cwd().parents] if (p / "utils").is_dir())
+sys.path.insert(0, str(RAIZ))
 
 # %%
 # @title Instalación de paquetes necesarios
-# %pip install rioxarray xarray matplotlib numpy rasterio geopandas planetary-computer pystac-client odc-stac plotly
+# %pip install -q rioxarray xarray matplotlib numpy rasterio geopandas planetary-computer pystac-client odc-stac plotly
 
 # %%
 # @title Importación de bibliotecas
@@ -28,29 +47,37 @@ import matplotlib.pyplot as plt
 import numpy as np
 import odc.stac
 import pandas as pd
-import planetary_computer
 import plotly.graph_objects as go
-import rioxarray as rxr
-import xarray as xr
-from plotly.subplots import make_subplots
-from pyproj import Transformer
-from pystac_client import Client
+import rioxarray  # noqa: F401  (activa el accesor .rio)
+
+# Funciones de apoyo del curso (carpeta utils/)
+from utils.raster import (
+    calcular_indices,
+    convertir_a_reflectancia,
+    extraer_series_puntos,
+    lonlat_a_crs,
+    nombres_bandas,
+    obtener_configuracion_sensor,
+    preparar_reflectancia,
+)
+from utils.stac import (
+    agregar_offset,
+    conectar_catalogo,
+    parametros_busqueda,
+    parametros_carga,
+    preparar_items,
+    renombrar_bandas,
+    resumir_imagenes,
+)
+from utils.viz import (
+    crear_imagen_rgb,
+    graficar_series_temporales,
+    mostrar_paneles,
+)
 
 # Configuración para visualización
-rxr
 plt.rcParams["figure.figsize"] = (12, 8)
 plt.style.use("ggplot")
-
-# Configuración para Colab
-try:
-    # Verificamos si estamos en Colab
-    import google.colab
-
-    IN_COLAB = True
-    print("🔧 Configurado para Google Colab")
-except ImportError:
-    IN_COLAB = False
-    print("🔧 Ejecutándose localmente")
 
 print("✅ Bibliotecas importadas exitosamente")
 
@@ -85,6 +112,7 @@ CONFIG = {
     "resolucion": 30,  # Resolución en metros
     "max_nubes": 30,  # Más tolerante a nubes para tener más imágenes
     "cargar_en_memoria": True,  # Sin chunks - todo en memoria
+    "enmascarar_nubes": True,  # Descarta nubes y sombras usando la banda de calidad
     # === PARÁMETROS ESPECÍFICOS TEMPORALES ===
     # "frecuencia_muestreo": 15,  # Días entre imágenes objetivo
     "min_imagenes": 12,  # Mínimo de imágenes para análisis temporal
@@ -103,144 +131,28 @@ dias_total = (
 print(f"📊 Duración: {dias_total} días ({dias_total / 365.25:.1f} años)")
 
 # %% [markdown]
-# ## 2. Funciones Reutilizadas y Especializadas
-
-
-# %%
-# @title Funciones utilitarias (reutilizadas del notebook anterior)
-def obtener_configuracion_sensor(sensor):
-    """
-    Retorna configuración específica para cada sensor satelital.
-    """
-    if sensor == "sentinel-2":
-        return {
-            "bandas": {
-                "red": "B04",
-                "green": "B03",
-                "blue": "B02",
-                "nir": "B08",
-                "swir1": "B11",
-                "swir2": "B12",
-            },
-            "rgb_bandas": ["B04", "B03", "B02"],
-            "falso_color": ["B08", "B04", "B03"],
-            "factor_reflectancia": 0.0001,
-            "offset": 0.0,
-            "rango_valido": (0, 1),
-            "coleccion": "sentinel-2-l2a",
-            "plataforma_filtro": None,
-            "descripcion": "Sentinel-2 L2A (ESA) - Series temporales de alta resolución",
-        }
-    elif sensor == "landsat":
-        return {
-            "bandas": {
-                "red": "red",
-                "green": "green",
-                "blue": "blue",
-                "nir": "nir08",
-                "swir1": "swir16",
-                "swir2": "swir22",
-            },
-            "rgb_bandas": ["red", "green", "blue"],
-            "falso_color": ["nir08", "red", "green"],
-            "factor_reflectancia": 0.0000275,
-            "offset": -0.2,
-            "rango_valido": (0, 1),
-            "coleccion": "landsat-c2-l2",
-            "plataforma_filtro": ["landsat-8", "landsat-9"],
-            "descripcion": "Landsat 8/9 Collection 2 L2 - Series históricas consistentes",
-        }
-    else:
-        raise ValueError(
-            f"Sensor '{sensor}' no soportado. Use 'sentinel-2' o 'landsat'"
-        )
-
-
-def convertir_a_reflectancia(imagen, config_sensor):
-    """Convierte números digitales a reflectancia según el sensor."""
-    factor = config_sensor["factor_reflectancia"]
-    offset = config_sensor["offset"]
-
-    imagen_refl = imagen * factor + offset
-
-    rango_min, rango_max = config_sensor["rango_valido"]
-    imagen_refl = imagen_refl.where(
-        (imagen_refl >= rango_min) & (imagen_refl <= rango_max)
-    )
-
-    return imagen_refl
-
-
-def calcular_ndvi(imagen, config_sensor):
-    """Calcula NDVI con validación de rangos."""
-    bandas = config_sensor["bandas"]
-    nir = imagen[bandas["nir"]]
-    red = imagen[bandas["red"]]
-
-    denominador = nir + red
-    ndvi = xr.where(denominador != 0, (nir - red) / denominador, np.nan)
-    ndvi = xr.where((ndvi >= -1) & (ndvi <= 1), ndvi, np.nan)
-
-    ndvi.name = "NDVI"
-    ndvi.attrs = {
-        "long_name": "Normalized Difference Vegetation Index",
-        "formula": "(NIR - RED) / (NIR + RED)",
-        "range": "-1 to +1",
-    }
-    return ndvi
-
-
-def calcular_evi(imagen, config_sensor):
-    """Calcula EVI con validación de rangos."""
-    bandas = config_sensor["bandas"]
-    nir = imagen[bandas["nir"]]
-    red = imagen[bandas["red"]]
-    blue = imagen[bandas["blue"]]
-
-    denominador = nir + 6 * red - 7.5 * blue + 1
-    evi = xr.where(denominador != 0, 2.5 * (nir - red) / denominador, np.nan)
-    evi = xr.where((evi >= -1) & (evi <= 1), evi, np.nan)
-
-    evi.name = "EVI"
-    evi.attrs = {
-        "long_name": "Enhanced Vegetation Index",
-        "formula": "2.5 * ((NIR - RED) / (NIR + 6*RED - 7.5*BLUE + 1))",
-        "range": "-1 to +1",
-    }
-    return evi
-
-
-def calcular_ndwi(imagen, config_sensor):
-    """Calcula NDWI con validación de rangos."""
-    bandas = config_sensor["bandas"]
-    nir = imagen[bandas["nir"]]
-    swir1 = imagen[bandas["swir1"]]
-
-    denominador = nir + swir1
-    ndwi = xr.where(denominador != 0, (nir - swir1) / denominador, np.nan)
-    ndwi = xr.where((ndwi >= -1) & (ndwi <= 1), ndwi, np.nan)
-
-    ndwi.name = "NDWI"
-    ndwi.attrs = {
-        "long_name": "Normalized Difference Water Index",
-        "formula": "(NIR - SWIR1) / (NIR + SWIR1)",
-        "range": "-1 to +1",
-    }
-    return ndwi
-
-
-def crear_imagen_rgb(dataset, bandas_rgb, factor_brillo=3.0):
-    """Crea imagen RGB para visualización."""
-    rgb_data = []
-    for banda in bandas_rgb:
-        rgb_data.append(dataset[banda].values)
-
-    rgb = np.stack(rgb_data, axis=2)
-    rgb_enhanced = np.clip(rgb * factor_brillo, 0, 1)
-    return rgb_enhanced
-
-
-print("🔧 Funciones utilitarias creadas exitosamente")
+# ## 2. Funciones de apoyo
+#
+# En el cuaderno anterior vimos cómo se calculan los índices de vegetación. Aquí reutilizamos esas funciones
+# desde la carpeta `utils/`, junto con otras nuevas para trabajar con series de tiempo:
+#
+# | Paso | Función | Qué hace |
+# |------|---------|----------|
+# | Búsqueda | `parametros_busqueda`, `preparar_items`, `resumir_imagenes` | Arman los argumentos de `catalogo.search(...)`, limpian los resultados y los resumen en una tabla |
+# | Bandas | `nombres_bandas(..., con_calidad=True)` | Traduce nombres genéricos ("nir") a los del sensor y agrega la banda de calidad |
+# | Carga | `parametros_carga`, `renombrar_bandas`, `agregar_offset` | Arman los argumentos de `odc.stac.load(...)` (Dataset de xarray con time, y, x) y dejan los nombres de banda y el offset de cada fecha |
+# | Calidad | `preparar_reflectancia` | Enmascara nubes y sombras, y convierte a reflectancia |
+# | Índices | `calcular_indices` | Calcula NDVI, EVI y NDWI para todas las fechas |
+# | Puntos | `lonlat_a_crs`, `extraer_series_puntos` | Transforma coordenadas y extrae la serie de cada punto |
+# | Gráficos | `graficar_series_temporales`, `mostrar_paneles` | Series interactivas y paneles de imágenes |
+#
+# > **Nota:** la conversión a reflectancia es `DN * factor + offset`. En Landsat el factor es 0.0000275 y el
+# > offset -0.2; en Sentinel-2 el factor es 0.0001 y el offset es -0.1 en las imágenes con versión de
+# > procesamiento (baseline) 04.00 o posterior (introducida el 25 de enero de 2022) y 0 en las anteriores.
+# > Depende del catálogo y del baseline de cada imagen, y los helpers lo manejan por imagen.
+# >
+# > Las llamadas `catalogo.search(...)` y `odc.stac.load(...)` las escribimos nosotros; los helpers de
+# > `utils.stac` solo arman sus argumentos y ordenan los datos.
 
 # %% [markdown]
 # ## 3. Búsqueda y Carga de Series Temporales
@@ -254,88 +166,91 @@ print(f"   Colección: {config_sensor['coleccion']}")
 print(f"   Período temporal: {CONFIG['fecha_inicio']} a {CONFIG['fecha_fin']}")
 
 # %%
-# Conectamos al catálogo STAC de Planetary Computer
-catalog = Client.open(
-    "https://planetarycomputer.microsoft.com/api/stac/v1",
-    modifier=planetary_computer.sign_inplace,
+# Conectamos al catálogo STAC. Landsat solo existe en Planetary Computer; Sentinel-2 usa el catálogo
+# por defecto del curso (`CATALOGO_SENTINEL2` en utils/stac.py).
+catalog = conectar_catalogo("planetary" if CONFIG["sensor"] == "landsat" else None)
+
+# Buscamos (período extendido): `parametros_busqueda` arma los argumentos de la búsqueda nativa
+parametros = parametros_busqueda(
+    CONFIG["sensor"],
+    CONFIG["bbox"],
+    (CONFIG["fecha_inicio"], CONFIG["fecha_fin"]),
+    nubes_max=CONFIG["max_nubes"],
+    catalogo=catalog,
 )
+busqueda = catalog.search(**parametros)
+items = busqueda.item_collection()
 
-# Configuramos la búsqueda temporal extendida
-query_params = {
-    "collections": [config_sensor["coleccion"]],
-    "bbox": CONFIG["bbox"],
-    "datetime": f"{CONFIG['fecha_inicio']}/{CONFIG['fecha_fin']}",
-    "query": {"eo:cloud_cover": {"lt": CONFIG["max_nubes"]}},
-}
-
-# Filtro adicional para Landsat
-if config_sensor["plataforma_filtro"]:
-    query_params["query"]["platform"] = {"in": config_sensor["plataforma_filtro"]}
-
-# Realizamos la búsqueda
-search = catalog.search(**query_params)
-items = list(search.items())
+# Quitamos versiones repetidas de una misma toma (Sentinel-2) y ordenamos por fecha
+items = preparar_items(items)
 
 print("🔍 Búsqueda temporal completada:")
 print(f"   Imágenes encontradas: {len(items)}")
 
-if len(items) < CONFIG["min_imagenes"]:
+if len(items) == 0:
+    print("❌ No se encontraron imágenes. Ajusta los parámetros de búsqueda.")
+elif len(items) < CONFIG["min_imagenes"]:
     print(f"⚠️ Pocas imágenes encontradas ({len(items)} < {CONFIG['min_imagenes']})")
     print("   Considera:")
     print("   - Aumentar el porcentaje máximo de nubes")
     print("   - Ampliar el período temporal")
     print("   - Cambiar la resolución espacial")
-elif len(items) == 0:
-    print("❌ No se encontraron imágenes. Ajusta los parámetros de búsqueda.")
 else:
     print("✅ Suficientes imágenes para análisis temporal")
 
-    # Información de las imágenes
-    fechas_disponibles = [item.datetime.strftime("%Y-%m-%d") for item in items]
+if len(items) > 0:
+    # Tabla resumen: fecha, % de nubes e id de cada imagen
+    tabla_imagenes = resumir_imagenes(items)
+    fechas_disponibles = pd.to_datetime(tabla_imagenes["fecha"])
+
     print("\n🕒 Rango de fechas:")
-    print(f"   Primera: {min(fechas_disponibles)}")
-    print(f"   Última: {max(fechas_disponibles)}")
+    print(f"   Primera: {fechas_disponibles.min().strftime('%Y-%m-%d')}")
+    print(f"   Última: {fechas_disponibles.max().strftime('%Y-%m-%d')}")
 
     # Distribución temporal
-    df_fechas = pd.DataFrame({"fecha": pd.to_datetime(fechas_disponibles)})
-    df_fechas["mes"] = df_fechas["fecha"].dt.month
-    distribucion = df_fechas["mes"].value_counts().sort_index()
+    distribucion = fechas_disponibles.dt.month.value_counts().sort_index()
     print("\n📊 Distribución por mes:")
     for mes, count in distribucion.items():
         print(f"   Mes {mes}: {count} imágenes")
 
+# %% [markdown]
+# Además de las bandas espectrales, pedimos la **banda de calidad** (`con_calidad=True`): en Landsat es
+# `qa_pixel` y en Sentinel-2 es `SCL`. Cada píxel de esa banda indica si hay nubes, sombras, cirrus, etc.,
+# y nos permitirá descartarlos más adelante.
+
 # %%
-# Definimos las bandas necesarias
-bandas_requeridas = [
-    config_sensor["bandas"]["red"],
-    config_sensor["bandas"]["green"],
-    config_sensor["bandas"]["blue"],
-    config_sensor["bandas"]["nir"],
-    config_sensor["bandas"]["swir1"],
-]
+# Definimos las bandas necesarias (nombres genéricos -> nombres del sensor)
+nombres_genericos = ["red", "green", "blue", "nir", "swir1"]
+bandas_espectrales = nombres_bandas(CONFIG["sensor"], nombres_genericos)
+bandas_requeridas = nombres_bandas(CONFIG["sensor"], nombres_genericos, con_calidad=True)
 
-print(f"🎯 Bandas a cargar: {bandas_requeridas}")
-
-# Configuramos parámetros de carga temporal
-load_params = {
-    "items": items,
-    "bands": bandas_requeridas,
-    "bbox": CONFIG["bbox"],
-    "crs": CONFIG["epsg"],
-    "resolution": CONFIG["resolucion"],
-    "groupby": "solar_day",
-}
+print(f"🎯 Bandas espectrales: {bandas_espectrales}")
+print(f"🎯 Bandas a cargar (con banda de calidad): {bandas_requeridas}")
 
 # Carga sin chunks para análisis temporal
-if not CONFIG["cargar_en_memoria"]:
-    load_params["chunks"] = {"x": 512, "y": 512, "time": 5}
-    print("📦 Cargando con chunks temporal")
-else:
+if CONFIG["cargar_en_memoria"]:
+    chunks = None
     print("🧠 Cargando serie temporal completa en memoria")
+else:
+    chunks = {"x": 512, "y": 512, "time": 5}
+    print("📦 Cargando con chunks temporal")
 
 # Cargamos la serie temporal
 print("⏳ Cargando serie temporal... (esto puede tomar varios minutos)")
-ds_temporal = odc.stac.load(**load_params)
+parametros_ds = parametros_carga(
+    CONFIG["sensor"],
+    bandas_requeridas,
+    resolucion=CONFIG["resolucion"],
+    crs=CONFIG["epsg"],
+    catalogo=catalog,
+    bbox=CONFIG["bbox"],
+    chunks=chunks,
+)
+ds_temporal = odc.stac.load(items, **parametros_ds)
+
+# Nombres de banda estándar y offset de reflectancia de cada fecha (Landsat queda igual)
+ds_temporal = renombrar_bandas(ds_temporal, catalogo=catalog)
+ds_temporal = agregar_offset(ds_temporal, items)
 
 print("\n📊 Serie temporal cargada:")
 print(f"   Dimensiones: {dict(ds_temporal.sizes)}")
@@ -354,14 +269,46 @@ print(
 ds_temporal
 
 # %% [markdown]
-# ## 4. Conversión a Reflectancia y Visualización de Muestra
+# ## 4. Máscara de Nubes y Conversión a Reflectancia
+#
+# Las nubes y sus sombras no representan la superficie, y distorsionan los índices (por ejemplo, una nube
+# tiene un NDVI cercano a 0 y haría parecer que la vegetación "desapareció" ese día). Por eso, antes de
+# calcular índices, **enmascaramos** esos píxeles: los reemplazamos por `NaN` para que no entren en los cálculos.
+#
+# * **Landsat**: la banda `qa_pixel` guarda, bit a bit, si el píxel es relleno, nube, nube dilatada, cirrus o sombra.
+# * **Sentinel-2**: la banda `SCL` (clasificación de escena) asigna a cada píxel una clase (nube media, nube alta, sombra, cirrus...).
+#
+# La función `preparar_reflectancia` hace dos cosas en un paso: aplica la máscara de calidad (y elimina la banda
+# de calidad del resultado) y convierte los números digitales a reflectancia (`DN * factor + offset`).
+# Para ver su efecto, comparamos con la conversión sin máscara.
 
 # %%
-# Convertimos toda la serie temporal a reflectancia
-print("🔄 Convirtiendo serie temporal a reflectancia...")
-ds_refl = convertir_a_reflectancia(ds_temporal, config_sensor)
+# Serie SIN máscara (solo conversión a reflectancia, sin la banda de calidad)
+ds_refl_sin_mascara = convertir_a_reflectancia(
+    ds_temporal[bandas_espectrales], CONFIG["sensor"]
+)
+
+# Serie lista para analizar: máscara de nubes (opcional) + reflectancia
+print("🔄 Preparando serie temporal (máscara de calidad + reflectancia)...")
+ds_refl = preparar_reflectancia(
+    ds_temporal, CONFIG["sensor"], enmascarar=CONFIG["enmascarar_nubes"]
+)
+ds_refl = ds_refl[bandas_espectrales]  # solo las bandas espectrales (sin la banda de calidad)
 
 print("✅ Serie temporal convertida a reflectancia")
+print(f"   Máscara de nubes aplicada: {CONFIG['enmascarar_nubes']}")
+
+# Porcentaje de píxeles válidos por fecha, con y sin máscara (banda roja)
+banda_roja = config_sensor["bandas"]["red"]
+validos = pd.DataFrame(
+    {
+        "sin_mascara_%": ds_refl_sin_mascara[banda_roja].notnull().mean(("x", "y")).values * 100,
+        "con_mascara_%": ds_refl[banda_roja].notnull().mean(("x", "y")).values * 100,
+    },
+    index=pd.to_datetime(ds_refl.time.values).strftime("%Y-%m-%d"),
+)
+print("\n📊 Píxeles válidos por fecha (primeras 10 fechas):")
+print(validos.head(10).round(1))
 
 # Verificamos rangos por banda y fecha
 print("\n📈 Verificación de rangos (muestra de primeras 3 fechas):")
@@ -372,7 +319,7 @@ for i, fecha in enumerate(ds_refl.time[:3]):
     print(f"\nFecha: {fecha_str}")
 
     imagen_fecha = ds_refl.sel(time=fecha)
-    for banda in bandas_requeridas:
+    for banda in bandas_espectrales:
         datos = imagen_fecha[banda]
         datos_validos = datos.where(~np.isnan(datos))
 
@@ -394,53 +341,58 @@ rgb_muestra = crear_imagen_rgb(imagen_muestra, config_sensor["rgb_bandas"])
 # Falso color
 falso_color_muestra = crear_imagen_rgb(imagen_muestra, config_sensor["falso_color"])
 
-# Visualización
-fig, axes = plt.subplots(1, 2, figsize=(18, 8))
-fig.suptitle(
-    f"Serie Temporal - Imagen de Muestra: {fecha_muestra_str}",
-    fontsize=16,
-    fontweight="bold",
+mostrar_paneles(
+    [
+        (f"Color Verdadero (RGB)\n{config_sensor['descripcion']}", rgb_muestra),
+        ("Falso Color (NIR-R-G)\nVegetación en tonos rojos", falso_color_muestra),
+    ],
+    ncols=2,
+    titulo=(
+        f"Serie Temporal - Imagen de Muestra: {fecha_muestra_str} | "
+        f"{len(ds_refl.time)} imágenes | Resolución: {CONFIG['resolucion']}m"
+    ),
 )
-
-# RGB
-axes[0].imshow(rgb_muestra)
-axes[0].set_title(f"Color Verdadero (RGB)\n{config_sensor['descripcion']}")
-axes[0].axis("off")
-
-# Falso color
-axes[1].imshow(falso_color_muestra)
-axes[1].set_title("Falso Color (NIR-R-G)\nVegetación en tonos rojos")
-axes[1].axis("off")
-
-# Información de la serie
-plt.figtext(
-    0.5,
-    0.02,
-    f"Serie temporal: {len(ds_refl.time)} imágenes | "
-    f"Resolución: {CONFIG['resolucion']}m | "
-    f"Período: {pd.to_datetime(ds_refl.time.values).min().strftime('%Y-%m')} - "
-    f"{pd.to_datetime(ds_refl.time.values).max().strftime('%Y-%m')}",
-    ha="center",
-    fontsize=11,
-    style="italic",
-)
-
-plt.tight_layout()
-plt.show()
 
 print(f"🖼️ Imagen de muestra mostrada: {fecha_muestra_str}")
 print(f"📊 Posición en serie: {len(ds_refl.time) // 2 + 1}/{len(ds_refl.time)}")
 
 # %% [markdown]
+# ### Efecto de la máscara de nubes
+#
+# Comparemos la fecha con más píxeles descartados, sin y con máscara. Los píxeles enmascarados quedan
+# en `NaN` y se ven en blanco.
+
+# %%
+# Fecha con menos píxeles válidos tras aplicar la máscara
+pos_nubosa = int(np.argmin(validos["con_mascara_%"].values))
+fecha_nubosa_str = validos.index[pos_nubosa]
+
+rgb_sin_mascara = crear_imagen_rgb(
+    ds_refl_sin_mascara.isel(time=pos_nubosa), config_sensor["rgb_bandas"]
+)
+rgb_con_mascara = crear_imagen_rgb(ds_refl.isel(time=pos_nubosa), config_sensor["rgb_bandas"])
+
+mostrar_paneles(
+    [
+        ("Sin máscara de nubes", rgb_sin_mascara),
+        ("Con máscara de nubes\n(píxeles descartados en blanco)", rgb_con_mascara),
+    ],
+    ncols=2,
+    titulo=f"Efecto de la máscara de calidad - {fecha_nubosa_str}",
+)
+
+# %% [markdown]
 # ## 5. Cálculo de Índices para Serie Temporal
 
 # %%
-# Calculamos índices para toda la serie temporal (directamente con xarray)
+# Calculamos NDVI, EVI y NDWI para toda la serie temporal de una sola vez
 print("🕒 Calculando índices para serie temporal...")
 
-ndvi_temporal = calcular_ndvi(ds_refl, config_sensor)
-evi_temporal = calcular_evi(ds_refl, config_sensor)
-ndwi_temporal = calcular_ndwi(ds_refl, config_sensor)
+indexes = calcular_indices(ds_refl, CONFIG["sensor"])  # Dataset con NDVI, EVI y NDWI
+
+ndvi_temporal = indexes["NDVI"]
+evi_temporal = indexes["EVI"]
+ndwi_temporal = indexes["NDWI"]
 
 print(f"✅ Índices calculados para {len(ds_refl.time)} fechas")
 
@@ -577,8 +529,7 @@ lats = np.random.uniform(lat_min, lat_max, n_puntos)
 
 # Transformamos coordenadas de EPSG:4326 al CRS de la imagen
 image_crs = ds_refl.rio.crs
-transformer = Transformer.from_crs("EPSG:4326", image_crs, always_xy=True)
-x_utm, y_utm = transformer.transform(lons, lats)
+x_utm, y_utm = lonlat_a_crs(lons, lats, image_crs)
 
 # Creamos DataFrame con coordenadas en grados y UTM
 coords_puntos = pd.DataFrame(
@@ -601,21 +552,19 @@ for i, row in coords_puntos.iterrows():
 # %%
 # @title ¿Dónde están los puntos?
 
-# Creamos un dataset RGB para la imagen de muestra
-rgb_combined = xr.concat(
-    [
-        imagen_muestra[config_sensor["bandas"]["red"]].rename("red"),
-        imagen_muestra[config_sensor["bandas"]["green"]].rename("green"),
-        imagen_muestra[config_sensor["bandas"]["blue"]].rename("blue"),
-    ],
-    dim="band",
-)
-
 # Configuramos la figura
 fig, ax = plt.subplots(figsize=(14, 10))
 
-# Usamos xarray.imshow para mostrar la imagen RGB con coordenadas automáticas
-rgb_combined.plot.imshow(ax=ax, rgb="band", robust=True, add_colorbar=False)
+# Mostramos la imagen RGB de muestra, ubicada con sus coordenadas UTM
+ax.imshow(
+    rgb_muestra,
+    extent=[
+        float(imagen_muestra.x.min()),
+        float(imagen_muestra.x.max()),
+        float(imagen_muestra.y.min()),
+        float(imagen_muestra.y.max()),
+    ],
+)
 
 # Usamos las coordenadas UTM ya transformadas
 x_transformed = coords_puntos["x"].values
@@ -658,48 +607,22 @@ for i, row in coords_puntos.iterrows():
         bbox=dict(boxstyle="round,pad=0.5", facecolor=color, alpha=0.8),
     )
 
-# Añadimos leyenda
-# ax.legend(loc="upper right", bbox_to_anchor=(1.15, 1), fontsize=10)
-
 # Ajustamos el diseño
 plt.tight_layout()
 plt.show()
 
 
 # %%
-# Preparar los datos para el análisis
-indexes = xr.Dataset(
-    {"NDVI": ndvi_temporal, "EVI": evi_temporal, "NDWI": ndwi_temporal}
-)
+# Los índices de todas las fechas están en el Dataset `indexes` (NDVI, EVI, NDWI)
 indexes
 
 # %%
-# Extraemos series temporales para todos los puntos de una vez (método eficiente)
+# Extraemos series temporales para todos los puntos de una vez.
+# Para cada punto se toma el píxel más cercano; el resultado queda en formato largo
+# (una fila por punto, fecha e índice).
 print("\n⏳ Extrayendo series temporales para todos los puntos...")
 indices_nombres = ["NDVI", "EVI", "NDWI"]
-indexes_puntos = indexes.sel(
-    x=xr.DataArray(
-        coords_puntos["x"],
-        dims="punto_id",
-        coords={"punto_id": coords_puntos["punto_id"]},
-    ),
-    y=xr.DataArray(
-        coords_puntos["y"],
-        dims="punto_id",
-        coords={"punto_id": coords_puntos["punto_id"]},
-    ),
-    method="nearest",
-)
-serie_temporal = (
-    indexes_puntos.to_dataframe()
-    .reset_index()
-    .melt(
-        id_vars=["punto_id", "time", "y", "x"],
-        value_vars=indices_nombres,
-        var_name="indice",
-        value_name="valor",
-    )
-)
+serie_temporal = extraer_series_puntos(indexes, coords_puntos, columna_id="punto_id")
 serie_temporal
 
 # %% [markdown]
@@ -710,63 +633,14 @@ serie_temporal
 
 colores = ["green", "red", "blue", "orange", "purple", "cyan"]
 
-# Creamos 3 subplots (uno por índice)
-fig = make_subplots(
-    rows=3,
-    cols=1,
-    subplot_titles=["NDVI", "EVI", "NDWI"],
-    shared_xaxes=True,
-    vertical_spacing=0.08,
+# Un gráfico por índice (uno bajo otro), con una línea por punto
+graficar_series_temporales(
+    serie_temporal,
+    columna_id="punto_id",
+    indices=indices_nombres,
+    colores=colores,
+    titulo="Series Temporales de Índices de Vegetación por Punto",
 )
-
-# Para cada índice, creamos un subplot
-for j, indice in enumerate(indices_nombres):
-    # Para cada punto, añadimos una línea en el subplot correspondiente
-    for i, punto_id in enumerate(coords_puntos["punto_id"]):
-        color = colores[i % len(colores)]
-
-        # Filtramos datos del punto e índice específico
-        serie_punto_indice = serie_temporal[
-            (serie_temporal["punto_id"] == punto_id)
-            & (serie_temporal["indice"] == indice)
-        ].copy()
-
-        if len(serie_punto_indice) > 0:
-            # Filtramos valores no nulos
-            serie_punto_indice = serie_punto_indice.dropna(subset=["valor"])
-
-            if len(serie_punto_indice) > 0:
-                fig.add_trace(
-                    go.Scatter(
-                        x=serie_punto_indice["time"],
-                        y=serie_punto_indice["valor"],
-                        mode="lines+markers",
-                        name=punto_id,
-                        line=dict(color=color, width=2),
-                        marker=dict(size=4),
-                        showlegend=(
-                            j == 0
-                        ),  # Solo mostrar leyenda en el primer subplot
-                        legendgroup=punto_id,  # Agrupar por punto
-                    ),
-                    row=j + 1,
-                    col=1,
-                )
-
-fig.update_layout(
-    title="Series Temporales de Índices de Vegetación por Punto",
-    height=900,
-    hovermode="x unified",
-    legend=dict(yanchor="top", y=1, xanchor="left", x=1.02),
-)
-
-# Configurar ejes Y
-fig.update_yaxes(title_text="NDVI", row=1, col=1)
-fig.update_yaxes(title_text="EVI", row=2, col=1)
-fig.update_yaxes(title_text="NDWI", row=3, col=1)
-fig.update_xaxes(title_text="Fecha", row=3, col=1)
-
-fig.show()
 
 # %%
 # @title Estadísticas temporales por índice
@@ -974,18 +848,25 @@ for punto_id in coords_puntos["punto_id"]:
 # * **Correlaciones variables**: Las relaciones entre índices varían según la ubicación
 # * **Respuesta diferencial**: Cada punto responde de manera distinta a cambios estacionales
 #
+# **Máscara de Calidad:**
+#
+# En este análisis usamos la banda de calidad (`qa_pixel` en Landsat, `SCL` en Sentinel-2) para descartar
+# automáticamente píxeles con nubes, sombras de nubes, cirrus y píxeles de relleno. Con esto las series
+# temporales son mucho más limpias: desaparecen las caídas bruscas del NDVI causadas por nubes.
+#
 # **Limitaciones del Análisis Actual:**
 #
-# * **⚠️ Máscara de Calidad Faltante**: Este análisis no utiliza las bandas de calidad (QA)
-#   disponibles en los productos Landsat y Sentinel-2 para enmascarar automáticamente:
-#   - Píxeles con nubes y sombras de nubes
-#   - Píxeles con cirrus (nubes altas)
-#   - Píxeles saturados o con problemas instrumentales
-#   - Agua y nieve (cuando no son de interés)
+# * **Máscara imperfecta**: La banda de calidad es un algoritmo automático. Puede dejar pasar neblina
+#   o nubes muy delgadas, y a veces descarta píxeles brillantes que sí son válidos (por ejemplo, suelo
+#   desnudo muy claro).
+# * **Agua y nieve**: No se excluyen por defecto. Si no son de interés, se pueden agregar al parámetro
+#   `excluir` de `preparar_reflectancia` (por ejemplo, `excluir=["nube", "sombra_nube", "nieve"]` en Landsat).
+# * **Menos fechas útiles por píxel**: Al enmascarar, algunos píxeles quedan sin datos en ciertas fechas
+#   (se ven como huecos en las series).
 #
 # **Próximos Pasos Recomendados:**
 #
-# 1. **Implementar máscara de calidad** para mejorar la precisión temporal
+# 1. **Probar otras máscaras**: cambiar `excluir` en `preparar_reflectancia` o comparar con `enmascarar_nubes: False`
 # 2. **Análisis de tendencias** a largo plazo (>3 años)
 # 3. **Detección automática de cambios** usando algoritmos como BFAST
 # 4. **Validación con datos de campo** para calibrar interpretaciones

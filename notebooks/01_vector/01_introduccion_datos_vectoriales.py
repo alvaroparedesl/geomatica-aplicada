@@ -16,6 +16,8 @@
 # %% [markdown]
 # # Introducción a Datos Vectoriales
 #
+# [![Abrir en Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/alvaroparedesl/geomatica-aplicada/blob/main/notebooks/01_vector/01_introduccion_datos_vectoriales.ipynb) [![Licencia: GPL-3.0](https://img.shields.io/badge/licencia-GPL--3.0-blue.svg)](https://github.com/alvaroparedesl/geomatica-aplicada/blob/main/LICENSE) [![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://colab.research.google.com/) [![Último commit](https://img.shields.io/github/last-commit/alvaroparedesl/geomatica-aplicada?label=%C3%BAltimo%20commit)](https://github.com/alvaroparedesl/geomatica-aplicada/commits/main)
+#
 # En este notebook aprenderemos los conceptos básicos de geometrías vectoriales usando la biblioteca Shapely.
 #
 # **Objetivos:**
@@ -61,7 +63,7 @@ print("\nLínea:", linea)
 print("Coordenadas:", list(linea.coords))
 
 # Creamos un polígono
-poligono = Polygon([(0, 0), (1, 0), (1, 1), (0, 1), (0, 0)])
+poligono = Polygon([(0, 0), (0, 1), (1, 1), (1, 0), (0, 0)])
 print("\nPolígono:", poligono)
 print("Coordenadas:", list(poligono.exterior.coords))
 
