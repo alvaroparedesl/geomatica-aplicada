@@ -1,0 +1,37 @@
+# Dependencias de los notebooks de Geomática Aplicada
+# Local:  pip install -r requirements.txt
+# Colab:  la mayoría ya viene instalada; cada notebook instala lo que falta.
+
+# --- Vectorial ---
+geopandas
+shapely
+pyproj
+folium
+mapclassify   # necesario para plot(scheme="quantiles") en geopandas
+networkx      # 01_introduccion_datos_vectoriales
+
+# --- Raster / teledetección ---
+numpy
+pandas
+xarray
+rioxarray
+rasterio
+xarray-spatial
+scipy
+scikit-image
+
+# --- Imágenes satelitales (STAC / Planetary Computer) ---
+pystac-client
+planetary-computer
+odc-stac
+
+# --- Visualización e interactividad ---
+matplotlib
+seaborn
+plotly
+ipywidgets
+ipyleaflet
+
+# --- Utilidades ---
+requests
+openpyxl      # exportar series temporales a Excel

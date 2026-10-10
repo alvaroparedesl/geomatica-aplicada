@@ -1,0 +1,117 @@
+[
+ {
+  "id": "S2B_MSIL2A_20220131T144719_R139_T18HXE_20220216T205011",
+  "bbox": [
+   -73.88852,
+   -37.12885611,
+   -72.80597,
+   -36.12363789
+  ],
+  "type": "Feature",
+  "links": [
+   {
+    "rel": "collection",
+    "type": "application/json",
+    "href": "https://planetarycomputer.microsoft.com/api/stac/v1/collections/sentinel-2-l2a"
+   },
+   {
+    "rel": "self",
+    "type": "application/geo+json",
+    "href": "https://planetarycomputer.microsoft.com/api/stac/v1/collections/sentinel-2-l2a/items/S2B_MSIL2A_20220131T144719_R139_T18HXE_20220216T205011"
+   }
+  ],
+  "assets": {
+   "B02": {
+    "href": "https://sentinel2l2a01.blob.core.windows.net/sentinel2-l2/18/H/XE/2022/01/31/S2B_MSIL2A_20220131T144719_N0400_R139_T18HXE_20220216T205011.SAFE/GRANULE/L2A_T18HXE_A025619_20220131T145314/IMG_DATA/R10m/T18HXE_20220131T144719_B02_10m.tif",
+    "type": "image/tiff; application=geotiff; profile=cloud-optimized"
+   },
+   "B04": {
+    "href": "https://sentinel2l2a01.blob.core.windows.net/sentinel2-l2/18/H/XE/2022/01/31/S2B_MSIL2A_20220131T144719_N0400_R139_T18HXE_20220216T205011.SAFE/GRANULE/L2A_T18HXE_A025619_20220131T145314/IMG_DATA/R10m/T18HXE_20220131T144719_B04_10m.tif",
+    "type": "image/tiff; application=geotiff; profile=cloud-optimized"
+   },
+   "B08": {
+    "href": "https://sentinel2l2a01.blob.core.windows.net/sentinel2-l2/18/H/XE/2022/01/31/S2B_MSIL2A_20220131T144719_N0400_R139_T18HXE_20220216T205011.SAFE/GRANULE/L2A_T18HXE_A025619_20220131T145314/IMG_DATA/R10m/T18HXE_20220131T144719_B08_10m.tif",
+    "type": "image/tiff; application=geotiff; profile=cloud-optimized"
+   },
+   "SCL": {
+    "href": "https://sentinel2l2a01.blob.core.windows.net/sentinel2-l2/18/H/XE/2022/01/31/S2B_MSIL2A_20220131T144719_N0400_R139_T18HXE_20220216T205011.SAFE/GRANULE/L2A_T18HXE_A025619_20220131T145314/IMG_DATA/R20m/T18HXE_20220131T144719_SCL_20m.tif",
+    "type": "image/tiff; application=geotiff; profile=cloud-optimized"
+   }
+  },
+  "geometry": {
+   "type": "Polygon",
+   "coordinates": [
+    [
+     [
+      -72.80597,
+      -36.1236379
+     ],
+     [
+      -72.84686,
+      -36.269993
+     ],
+     [
+      -72.88806,
+      -36.4169847
+     ],
+     [
+      -72.929565,
+      -36.5639646
+     ],
+     [
+      -72.97089,
+      -36.7111197
+     ],
+     [
+      -73.01236,
+      -36.858287
+     ],
+     [
+      -73.04108,
+      -36.9594705
+     ],
+     [
+      -73.05463,
+      -37.0070543
+     ],
+     [
+      -73.065796,
+      -37.0455172
+     ],
+     [
+      -73.08673,
+      -37.1172717
+     ],
+     [
+      -73.87421,
+      -37.1288561
+     ],
+     [
+      -73.88852,
+      -36.1391999
+     ],
+     [
+      -72.80597,
+      -36.1236379
+     ]
+    ]
+   ]
+  },
+  "collection": "sentinel-2-l2a",
+  "properties": {
+   "datetime": "2022-01-31T14:47:19.024000Z",
+   "platform": "Sentinel-2B",
+   "constellation": "Sentinel 2",
+   "eo:cloud_cover": 0.015462,
+   "s2:processing_baseline": "04.00",
+   "s2:mgrs_tile": "18HXE",
+   "s2:datastrip_id": "S2B_OPER_MSI_L2A_DS_ESRI_20220216T205012_S20220131T145314_N04.00",
+   "s2:generation_time": "2022-02-16T20:50:11.116215Z",
+   "s2:product_uri": "S2B_MSIL2A_20220131T144719_N0400_R139_T18HXE_20220216T205011.SAFE",
+   "sat:relative_orbit": 139,
+   "proj:epsg": 32718
+  },
+  "stac_version": "1.0.0",
+  "stac_extensions": []
+ }
+]
