@@ -1,0 +1,39 @@
+# Verificaciones locales antes de cada commit (no hay CI en GitHub a propósito).
+# Instalación: pip install -r requirements-dev.txt && pre-commit install
+# Ejecutar a mano: pre-commit run --all-files
+# Los hooks locales usan el `python` del entorno activo, así que activa el
+# entorno virtual del proyecto antes de hacer commit.
+repos:
+  - repo: local
+    hooks:
+      - id: pruebas-offline
+        name: pruebas de utils/ (sin internet)
+        entry: python -m pytest utils -m "not red" -q
+        language: system
+        files: ^utils/
+        pass_filenames: false
+
+      - id: cuadernos-sincronizados
+        name: .ipynb al día respecto del .py (jupytext)
+        entry: python scripts/verificar_notebooks.py
+        language: system
+        files: ^(notebooks|talleres)/.*\.(py|ipynb)$|^scripts/verificar_notebooks\.py$
+        pass_filenames: false
+
+      - id: sin-rayas-largas
+        name: sin rayas largas (U+2014) en textos del curso
+        # Falla si aparece el carácter U+2014 (o su escape — en un .ipynb).
+        entry: '—|\\u2014'
+        language: pygrep
+        files: ^((notebooks|talleres|utils)/.*\.(py|md|ipynb)|[^/]+\.md)$
+
+  # Higiene básica. Solo hooks que no modifican archivos, para no reformatear
+  # cuadernos ni textos del curso por accidente.
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+      - id: check-merge-conflict
+      - id: detect-private-key
+      - id: check-added-large-files
+        args: [--maxkb=1024]

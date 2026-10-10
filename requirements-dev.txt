@@ -1,0 +1,9 @@
+# Dependencias para desarrollar y verificar el repositorio (no son necesarias
+# para ejecutar los cuadernos). Incluye las de los cuadernos y las de utils/.
+#   pip install -r requirements-dev.txt && pre-commit install
+-r requirements.txt
+
+pre-commit    # hooks locales antes de cada commit
+pytest        # pruebas de utils/
+jupytext      # regenerar y verificar los .ipynb
+nbformat      # lectura de .ipynb por jupytext
