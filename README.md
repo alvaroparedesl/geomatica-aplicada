@@ -1,181 +1,168 @@
 # Geomática Aplicada en Recursos Naturales
 
-## 🌍 Explorando nuestro planeta a través de datos geoespaciales
+[![Abrir en Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/alvaroparedesl/geomatica-aplicada/blob/main/notebooks/00_intro.ipynb) [![Licencia: GPL-3.0](https://img.shields.io/badge/licencia-GPL--3.0-blue.svg)](LICENSE) [![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://colab.research.google.com/) [![Último commit](https://img.shields.io/github/last-commit/alvaroparedesl/geomatica-aplicada?label=%C3%BAltimo%20commit)](https://github.com/alvaroparedesl/geomatica-aplicada/commits/main)
 
-Este repositorio contiene materiales para el curso de Geomática Aplicada, diseñado para estudiantes de tercer año en recursos naturales. Aquí aprenderás a utilizar Python para análisis geoespacial, procesamiento de imágenes satelitales y visualización de datos ambientales.
+Materiales del curso de Geomática Aplicada, pensado para estudiantes de tercer año de recursos naturales. Aquí aprenderás a usar Python para el análisis de datos geoespaciales, el procesamiento de imágenes satelitales y la visualización de datos ambientales, con ejemplos prácticos en cada etapa.
 
-## 🔍 ¿Qué aprenderás?
+## Qué aprenderás
 
-* Manipulación y análisis de datos vectoriales con GeoPandas
-* Procesamiento y análisis de datos raster con herramientas modernas
-* Conexión a catálogos de imágenes satelitales y servicios geoespaciales
-* Aplicación de técnicas geomáticas para resolver problemas reales en recursos naturales
+* Manipulación y análisis de datos vectoriales con Shapely y GeoPandas
+* Procesamiento y análisis de datos raster con xarray y rioxarray
+* Acceso a imágenes satelitales (Landsat y Sentinel-2) desde el catálogo STAC de Microsoft Planetary Computer
+* Cálculo de índices de vegetación y análisis multitemporal
+* Aplicación de técnicas geomáticas a problemas reales en recursos naturales
 
-## 🚀 Preparado para comenzar tu viaje geoespacial
+## Cómo usar los cuadernos en Google Colab
 
-Este curso está diseñado para llevarte desde los conceptos básicos hasta aplicaciones avanzadas, con ejemplos prácticos en cada etapa del camino. ¡Prepárate para ver el mundo desde una nueva perspectiva!
+Los cuadernos están pensados para ejecutarse en [Google Colab](https://colab.research.google.com/), directamente en el navegador y sin instalar nada. Solo necesitas una cuenta de Google.
 
-## 📝 Entorno de trabajo
+1. Abre el cuaderno que quieras con su botón **Abrir en Colab** (aparece al inicio de cada cuaderno y en las tablas de los README de [`notebooks/01_vector`](notebooks/01_vector/README.md) y [`notebooks/02_raster`](notebooks/02_raster/README.md)). Se recomienda comenzar por el [cuaderno de introducción](https://colab.research.google.com/github/alvaroparedesl/geomatica-aplicada/blob/main/notebooks/00_intro.ipynb).
+2. Ejecuta primero la celda **Preparar entorno**. En Colab clona este repositorio en `/content/geomatica-aplicada` (solo la primera vez de la sesión) para que el cuaderno pueda usar la carpeta `utils/`.
+3. Ejecuta la celda de instalación de paquetes (`%pip install ...`) y luego el resto de las celdas en orden.
 
-Los cuadernos de este curso están optimizados para ejecutarse en **Google Colab**, lo que permite trabajar directamente en tu navegador sin necesidad de instalar software adicional. Cada cuaderno incluye las instrucciones necesarias para configurar el entorno de trabajo.
-
-### 🔄 Sincronización con Google Drive
-
-Este repositorio incluye una herramienta para sincronizar automáticamente los notebooks con Google Drive, facilitando su uso en Google Colab:
+Si prefieres trabajar en tu computador, clona el repositorio, instala las dependencias y abre los cuadernos con Jupyter o VS Code:
 
 ```bash
-# Configuración inicial (solo una vez)
-./sync_to_gdrive.sh setup
-
-# Forzar renovación de credenciales
-./sync_to_gdrive.sh setup --force-refresh
-
-# Ver estado de configuración
-./sync_to_gdrive.sh status
-
-# Reconfigurar carpeta de destino
-./sync_to_gdrive.sh config
-
-# Resetear credenciales almacenadas
-./sync_to_gdrive.sh reset
-
-# Sincronizar todos los notebooks
-./sync_to_gdrive.sh sync --all
-
-# Sincronizar carpeta específica
-./sync_to_gdrive.sh sync --folder notebooks/01_vector
-
-# Sincronizar archivo específico
-./sync_to_gdrive.sh sync --file notebooks/01_vector/01_introduccion_datos_vectoriales.py
-
-# Vista previa (sin subir archivos)
-./sync_to_gdrive.sh sync --all --dry-run
+git clone https://github.com/alvaroparedesl/geomatica-aplicada
+cd geomatica-aplicada
+pip install -r requirements.txt
 ```
 
-**Características:**
-- ✅ Convierte automáticamente archivos `.py` (Jupytext) a `.ipynb` 
-- ✅ Mantiene la estructura de carpetas en Google Drive
-- ✅ Solo actualiza archivos modificados (eficiente)
-- ✅ Configuración de credenciales guiada
-- ✅ Soporte para carpetas existentes usando ID de carpeta
-- ✅ Configuración persistente y reutilizable
-- ✅ Gestión inteligente de credenciales (reutiliza tokens válidos)
-- ✅ Opciones para renovar o resetear credenciales
-- ✅ Compatible con Google Colab
+El archivo [`requirements.txt`](requirements.txt) lista todas las dependencias de los cuadernos. En Colab la mayoría ya viene instalada y cada cuaderno instala lo que falte. Como referencia, Colab usa actualmente Python 3.13.
 
-**Requisitos para la sincronización:**
+## Estructura del repositorio
+
+```
+geomatica-aplicada/
+├── notebooks/                                  # Cuadernos del curso (fuente en .py, versión .ipynb generada)
+│   ├── 00_intro.py                             # Introducción a Jupyter y Google Colab
+│   ├── 01_vector/                              # Datos vectoriales
+│   │   ├── 01_introduccion_datos_vectoriales.py
+│   │   ├── 02_introduccion_geopandas.py
+│   │   ├── 03_operaciones_espaciales.py
+│   │   └── README.md
+│   ├── 02_raster/                              # Datos raster y teledetección
+│   │   ├── 00_demo_imagenes.py
+│   │   ├── 01_datos_raster.py
+│   │   ├── 02_intro_teledeteccion.py
+│   │   ├── 03_acceso_imagenes.py
+│   │   ├── 04_estadisticas_imagenes.py
+│   │   ├── 05_ejercicio_histograma_landsat.py
+│   │   ├── 06_indices_vegetacion.py
+│   │   ├── 07_analisis_multitemporal.py
+│   │   └── README.md
+│   └── README.md                               # Guía de los cuadernos y su flujo de trabajo
+├── utils/                                      # Funciones de apoyo reutilizables
+│   ├── vector.py                               # Descarga de capas y cálculo de áreas
+│   ├── stac.py                                 # Parámetros de búsqueda y carga STAC, offset de Sentinel-2
+│   ├── raster.py                               # Reflectancia, máscaras de nubes, índices, series
+│   ├── viz.py                                  # Gráficos, mapas y widgets interactivos
+│   ├── tests/                                  # Pruebas (pytest), con datos de prueba reales
+│   └── README.md                               # Documentación de las funciones
+├── talleres/                                   # (próximamente) talleres complementarios
+├── scripts/                                    # Verificaciones locales (pre-commit)
+├── requirements.txt                            # Dependencias de los cuadernos
+├── requirements-dev.txt                        # Dependencias para desarrollo y pruebas
+├── .pre-commit-config.yaml                     # Verificaciones antes de cada commit
+├── CLAUDE.md                                   # Instrucciones para asistentes de código
+├── requirements-sync.txt                       # Dependencias de la herramienta de sincronización
+├── sync_to_gdrive.py                           # Sincronización de cuadernos con Google Drive
+├── sync_to_gdrive.sh                           # Envoltorio en bash de sync_to_gdrive.py
+├── SYNC_SETUP.md                               # Guía de configuración de la sincronización
+├── LICENSE                                     # GNU GPL v3
+└── README.md
+```
+
+Cada cuaderno existe en dos formatos: el archivo `.py` (formato jupytext `py:percent`) es la **fuente** que se edita, y el `.ipynb` se genera a partir de él. Más detalles en [`notebooks/README.md`](notebooks/README.md).
+
+## La carpeta `utils/`
+
+Para que los cuadernos se concentren en lo que enseñan, el código repetitivo (buscar imágenes, convertir a reflectancia, enmascarar nubes, calcular índices, hacer gráficos) vive en la carpeta [`utils/`](utils/README.md) y se importa con `from utils.<módulo> import ...`.
+
+Para que esto funcione tanto en Colab como en local, la primera celda de código de los cuadernos es siempre la misma:
+
+```python
+# @title Preparar entorno (ejecutar primero)
+import subprocess
+import sys
+from pathlib import Path
+
+if "google.colab" in sys.modules:  # Colab: clonar el repositorio (solo la primera vez)
+    RAIZ = Path("/content/geomatica-aplicada")
+    if not RAIZ.exists():
+        subprocess.run(["git", "clone", "-q", "--depth", "1",
+                        "https://github.com/alvaroparedesl/geomatica-aplicada", str(RAIZ)], check=True)
+else:  # Local: subir desde la carpeta actual hasta encontrar utils/
+    RAIZ = next(p for p in [Path.cwd(), *Path.cwd().parents] if (p / "utils").is_dir())
+sys.path.insert(0, str(RAIZ))
+```
+
+En Colab clona el repositorio y en un computador local busca la carpeta `utils/` hacia arriba desde el cuaderno. En ambos casos deja definida la variable `RAIZ` (carpeta del repositorio). La documentación de cada función está en [`utils/README.md`](utils/README.md).
+
+## Acceso a datos
+
+* **Datos vectoriales**: se descargan directamente de fuentes públicas (por ejemplo Natural Earth) o se crean en el propio cuaderno.
+* **Imágenes satelitales y datos raster**: se acceden en línea a través de Microsoft Planetary Computer (catálogo STAC), sin descargar archivos al repositorio. Esto incluye Landsat, Sentinel-2, la cobertura de suelo ESA WorldCover y el modelo de elevación Copernicus DEM. Para ejecutar los cuadernos de la sección raster necesitas conexión a internet.
+
+## Sincronización con Google Drive (opcional)
+
+La herramienta [`sync_to_gdrive.py`](sync_to_gdrive.py) (con su envoltorio [`sync_to_gdrive.sh`](sync_to_gdrive.sh)) convierte los cuadernos `.py` a `.ipynb` y los sube a una carpeta de Google Drive, manteniendo la estructura de carpetas y subiendo solo lo que cambió. Es útil para quienes mantienen el curso y quieren abrir las versiones actualizadas en Colab desde Drive.
+
 ```bash
 pip install -r requirements-sync.txt
+./sync_to_gdrive.sh setup          # configuración inicial (una sola vez)
+./sync_to_gdrive.sh sync --all     # sincronizar todos los cuadernos
 ```
 
-Los archivos se subirán a una carpeta llamada `Geomatica-Aplicada-Notebooks` en tu Google Drive, manteniendo la misma estructura del repositorio.
+Para ver todas las opciones (`status`, `config`, `reset`, `--dry-run`, `--force`, etc.) y la configuración paso a paso de las credenciales, consulta [SYNC_SETUP.md](SYNC_SETUP.md).
 
-> 📖 **Guía detallada de configuración**: Para instrucciones paso a paso sobre cómo configurar las credenciales de Google Drive y usar todas las funciones del script, consulta [SYNC_SETUP.md](SYNC_SETUP.md).
+## Próximamente: talleres
 
-## 📁 Estructura del Repositorio
+Se agregará una carpeta `talleres/`. El primer taller, de 2,5 días, será **Datos FAIR, series temporales satelitales y detección de anomalías** y vivirá en `talleres/fair-series-temporales/`.
 
-```
-root/
-├── notebooks/                          # Cuadernos Jupyter en formato jupytext
-│   ├── 01_vector/                      # Análisis de datos vectoriales y SIG
-│   │   ├── 01_sistemas_referencia.py       # Sistemas de referencia geoespacial
-│   │   ├── 02_sig_webmapping.py            # Definición de SIG, Web Mapping
-│   │   ├── 03_datos_geograficos.py         # Datos Geográficos y mapas temáticos
-│   │   ├── 04_ejercicio_datos_geo.py       # Ejercicio de dato geográfico
-│   │   ├── 05_datos_vectoriales.py         # Datos vectoriales (puntos, líneas, polígonos)
-│   │   ├── 06_analisis_espacial.py         # Análisis espacial (intro, operadores)
-│   │   └── 07_aplicaciones_recursos.py     # Aplicaciones en recursos naturales
-│   ├── 02_raster/                      # Análisis de datos raster y teledetección
-│   │   ├── 01_datos_raster.py              # Definición de datos Raster
-│   │   ├── 02_intro_teledeteccion.py       # Introducción a la Teledetección
-│   │   ├── 03_principios_fisicos.py        # Principios Físicos de Teledetección
-│   │   ├── 04_acceso_imagenes.py           # Acceso a imágenes con pySTAC y PC
-│   │   ├── 05_estadisticas_imagenes.py     # Características y estadísticas de imágenes
-│   │   ├── 06_visualizacion_imagenes.py    # Tratamiento y visualización de imágenes
-│   │   ├── 07_indices_vegetacion.py        # Índices de vegetación (NDVI, EVI, etc.)
-│   │   └── 08_analisis_multitemporal.py    # Análisis multitemporal y detección de cambios
-│   └── README.md                       # Instrucciones para los cuadernos
-├── data/                               # Conjuntos de datos de ejemplo
-│   ├── vector/                         # Datos vectoriales
-│   └── raster/                         # Datos raster de muestra para intro
-├── img/                                # Imágenes para los cuadernos
-├── utils/                              # Funciones de utilidad
-│   ├── vector_utils.py                 # Utilidades para datos vectoriales
-│   └── raster_utils.py                 # Utilidades para datos raster
-└── .gitignore                          # Archivos ignorados
+## Contenido del curso
+
+El detalle de cada cuaderno está en los README de cada sección:
+
+* [`notebooks/01_vector`](notebooks/01_vector/README.md): datos vectoriales con Shapely y GeoPandas
+* [`notebooks/02_raster`](notebooks/02_raster/README.md): datos raster, teledetección e índices de vegetación
+
+## Desarrollo y pruebas
+
+Esta sección es para quien mantiene el curso. Las verificaciones corren **en tu computador, antes de cada commit**, con [pre-commit](https://pre-commit.com/). No hay integración continua (GitHub Actions) a propósito: todo se revisa localmente.
+
+Instala las dependencias de desarrollo y activa los hooks (una sola vez por clon):
+
+```bash
+pip install -r requirements-dev.txt
+pre-commit install
 ```
 
-## 🛠️ Tecnologías Utilizadas
+Desde ese momento, cada `git commit` ejecuta los hooks sobre los archivos modificados. Los hooks usan el `python` del entorno activo, así que activa tu entorno virtual antes de hacer commit. Para ejecutarlos a mano sobre todo el repositorio:
 
-**Análisis de datos vectoriales:**
-- Python 3.12+
-- GeoPandas
-- Folium
-- Matplotlib
-- Shapely
+```bash
+pre-commit run --all-files
+```
 
-**Análisis de datos raster:**
-- Rioxarray
-- Xarray
-- Rasterio
-- pySTAC
-- Planetary Computer
-- ODC (Open Data Cube)
+Qué revisa cada hook (definidos en [`.pre-commit-config.yaml`](.pre-commit-config.yaml)):
 
-## 🔄 Acceso a datos
+* **Pruebas de `utils/` sin internet**: ejecuta `pytest utils -m "not red" -q` cuando cambia algo dentro de `utils/`. Dura unos segundos.
+* **Cuadernos sincronizados**: [`scripts/verificar_notebooks.py`](scripts/verificar_notebooks.py) comprueba que cada cuaderno `.py` de `notebooks/` y `talleres/` tenga un `.ipynb` con las mismas celdas (se ignoran salidas y metadatos). Si falla, indica el comando para regenerarlo: `jupytext --to notebook <archivo>.py`.
+* **Sin rayas largas**: falla si aparece el carácter U+2014 en archivos `.py`, `.md` o `.ipynb` de `notebooks/`, `talleres/` y `utils/`, o en los `.md` de la raíz. El estilo del curso usa comas, paréntesis o dos puntos en su lugar.
+* **Higiene básica**: YAML válido, marcas de conflicto de merge, claves privadas y archivos de más de 1 MB. Ninguno modifica archivos.
 
-- **Datos vectoriales**: Se descargarán directamente de fuentes públicas cuando sea posible.
-- **Imágenes satelitales**: Se accederá a través de Planetary Computer, lo que permite trabajar con imágenes Landsat y Sentinel-2 sin necesidad de descargarlas. Esta funcionalidad se introduce temprano en el curso para permitir trabajar con imágenes reales desde el principio.
-- **Datos de muestra**: Para los primeros cuadernos, se proporcionan algunos datos de ejemplo para facilitar el aprendizaje.
+Las pruebas con internet (marcador `red`) consultan los catálogos STAC reales y tardan unos 12 minutos, por eso no corren en cada commit. Ejecútalas a mano antes de un release, de un curso o de un taller:
 
-## 📚 Módulos del Curso
+```bash
+pytest utils -m red
+```
 
-### 1. Análisis de Datos Vectoriales y Sistemas de Información Geográfica
-- **Sistemas de referencia geoespacial**
-  - Conceptos básicos de cartografía
-  - Sistemas de coordenadas geográficas y proyectadas
-  - Datums y transformaciones
-- **Sistemas de Información Geográfica (SIG)**
-  - Componentes y funciones de un SIG
-  - Web Mapping y geoportales (ejemplo: geoportal CONAF)
-- **Datos Geográficos**
-  - Mapas temáticos y representación
-  - Ejercicios prácticos con datos geográficos
-- **Datos Vectoriales**
-  - Puntos, líneas y polígonos
-  - Trabajo con GeoPandas
-  - Operaciones espaciales
-- **Análisis Espacial**
-  - Introducción y conceptos básicos
-  - Operadores de atributos y operadores geométricos
-  - Visualización con Folium
-- **Aplicaciones en Recursos Naturales**
-  - Casos de estudio aplicados
+También conviene una ejecución de humo de los cuadernos (que corran de principio a fin con internet) antes de un curso o un taller:
 
-### 2. Análisis de Datos Raster y Teledetección
-- **Datos Raster**
-  - Conceptos básicos y estructura
-  - Manipulación con rioxarray y xarray
-- **Introducción a la Teledetección**
-  - Principios físicos
-  - Sensores y plataformas
-  - Resoluciones espacial, espectral, radiométrica y temporal
-- **Acceso a Imágenes Satelitales**
-  - Trabajo con pySTAC y Planetary Computer
-  - Acceso a datos Landsat y Sentinel-2
-  - Preparación para análisis
-- **Características y Estadísticas de Imágenes**
-  - Análisis estadístico básico
-  - Histogramas y distribuciones
-- **Tratamiento y Visualización de Imágenes**
-  - Correcciones y mejoras
-  - Técnicas de visualización
-- **Índices de Vegetación**
-  - NDVI, EVI y otros índices
-  - Álgebra de imágenes
-  - Aplicaciones en monitoreo ambiental
-- **Análisis Multitemporal**
-  - Series temporales de imágenes
-  - Detección de cambios
+```bash
+jupyter nbconvert --to notebook --execute --output-dir /tmp/humo notebooks/02_raster/*.ipynb
+```
 
----
+## Licencia
+
+Este proyecto se distribuye bajo la licencia GNU GPL v3. Consulta el archivo [LICENSE](LICENSE).

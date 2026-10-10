@@ -221,11 +221,18 @@ The script creates/uses a folder in your Google Drive with the same structure as
 Geomatica-Aplicada-Notebooks/
 ├── 00_intro.ipynb
 ├── 01_vector/
-│   └── 01_introduccion_datos_vectoriales.ipynb
+│   ├── 01_introduccion_datos_vectoriales.ipynb
+│   ├── 02_introduccion_geopandas.ipynb
+│   └── 03_operaciones_espaciales.ipynb
 └── 02_raster/
+    ├── 00_demo_imagenes.ipynb
     ├── 01_datos_raster.ipynb
     ├── 02_intro_teledeteccion.ipynb
-    └── 03_acceso_imagenes.ipynb
+    ├── 03_acceso_imagenes.ipynb
+    ├── 04_estadisticas_imagenes.ipynb
+    ├── 05_ejercicio_histograma_landsat.ipynb
+    ├── 06_indices_vegetacion.ipynb
+    └── 07_analisis_multitemporal.ipynb
 ```
 
 ## Using with Google Colab

@@ -1,44 +1,29 @@
-# Análisis de Datos Vectoriales y SIG
+# Datos vectoriales
 
-En esta sección del curso, aprenderás sobre sistemas de referencia geoespacial, sistemas de información geográfica y análisis de datos vectoriales con Python.
+[![Abrir en Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/alvaroparedesl/geomatica-aplicada/blob/main/notebooks/00_intro.ipynb) [![Licencia: GPL-3.0](https://img.shields.io/badge/licencia-GPL--3.0-blue.svg)](../../LICENSE) [![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://colab.research.google.com/) [![Último commit](https://img.shields.io/github/last-commit/alvaroparedesl/geomatica-aplicada?label=%C3%BAltimo%20commit)](https://github.com/alvaroparedesl/geomatica-aplicada/commits/main)
 
-## Contenido
+Esta sección introduce los datos vectoriales (puntos, líneas y polígonos): primero con Shapely, que modela las geometrías, y luego con GeoPandas, que añade atributos, sistemas de referencia y operaciones espaciales.
 
-1. **01_introduccion_datos_vectoriales.py**: Introducción a los datos vectoriales
-2. **02_sistemas_referencia.py**: Sistemas de referencia geoespacial
-3. **03_sig_webmapping.py**: Definición de SIG, Web Mapping (geoportal CONAF)
-4. **04_datos_geograficos.py**: Definición de datos geográficos, mapas temáticos y representación
-5. **05_ejercicio_datos_geograficos.py**: Ejercicios prácticos con datos geográficos
-6. **06_datos_vectoriales.py**: Datos vectoriales (puntos, líneas, polígonos)
-7. **07_analisis_espacial.py**: Análisis espacial (intro, operadores)
-8. **08_aplicaciones_recursos.py**: Aplicaciones en recursos naturales
+## Cuadernos
 
-## Temas cubiertos
+| Cuaderno | Descripción | Colab |
+|---|---|---|
+| [`01_introduccion_datos_vectoriales.py`](01_introduccion_datos_vectoriales.py) | Geometrías vectoriales con Shapely: puntos, líneas y polígonos, sus atributos, geometrías múltiples y polígonos con huecos. | [![Abrir en Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/alvaroparedesl/geomatica-aplicada/blob/main/notebooks/01_vector/01_introduccion_datos_vectoriales.ipynb) |
+| [`02_introduccion_geopandas.py`](02_introduccion_geopandas.py) | Primer contacto con GeoPandas: cargar, visualizar y filtrar datos espaciales, y realizar operaciones espaciales simples. Incluye un ejercicio con solución. | [![Abrir en Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/alvaroparedesl/geomatica-aplicada/blob/main/notebooks/01_vector/02_introduccion_geopandas.ipynb) |
+| [`03_operaciones_espaciales.py`](03_operaciones_espaciales.py) | Operaciones espaciales con GeoPandas: unión, intersección y diferencia, buffers, joins espaciales y overlay, con un caso práctico de áreas protegidas. | [![Abrir en Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/alvaroparedesl/geomatica-aplicada/blob/main/notebooks/01_vector/03_operaciones_espaciales.ipynb) |
 
-* Sistemas de coordenadas geográficas y proyectadas
-* Datums y transformaciones
-* Componentes y funciones de un SIG
-* Web Mapping y geoportales
-* Mapas temáticos y representación de datos geográficos
-* Representación de puntos, líneas y polígonos
-* Manipulación de GeoDataFrames con GeoPandas
-* Análisis espacial (buffers, intersecciones, uniones, etc.)
-* Operadores de atributos y operadores geométricos
-* Visualización de datos geoespaciales con Folium
-* Casos de estudio en recursos naturales
+## Cómo usarlos
 
-## Enfoque de consolidación
+1. Abre el cuaderno con su botón **Abrir en Colab**.
+2. Ejecuta primero la celda `Preparar entorno` (clona el repositorio para poder usar [`utils/`](../../utils/README.md)).
+3. Ejecuta el resto de las celdas en orden. Se recomienda seguir los cuadernos en orden numérico.
 
-Los cuadernos han sido consolidados por temas para proporcionar una experiencia de aprendizaje más coherente. Por ejemplo, los tres cuadernos originales sobre sistemas de referencia geoespacial se han unificado en uno solo. Si algún cuaderno resulta demasiado extenso, podrá dividirse en el futuro según sea necesario.
+## Datos
 
-## Datos de ejemplo
+Los datos vectoriales no están en el repositorio: se crean en el propio cuaderno o se descargan de fuentes públicas, por ejemplo con `utils.vector.descargar_natural_earth`.
 
-Los cuadernos utilizan conjuntos de datos específicos almacenados en la carpeta `data/vector/`. Cuando sea posible, se descargarán datos directamente de fuentes públicas para trabajar con información actualizada y real.
+## Paquetes principales
 
-## Entorno de trabajo
+Shapely, GeoPandas, Matplotlib, Folium, mapclassify y NetworkX. La lista completa está en [`requirements.txt`](../../requirements.txt).
 
-Estos cuadernos están diseñados para ejecutarse en **Google Colab**. Cada cuaderno incluye celdas de configuración inicial para instalar las bibliotecas necesarias y configurar el entorno adecuadamente.
-
-## Proceso de aprendizaje
-
-Se recomienda seguir los cuadernos en orden numérico, ya que cada uno se basa en conocimientos adquiridos en los anteriores. El primer cuaderno cubre conceptos fundamentales de cartografía y sistemas de referencia, mientras que los siguientes se enfocan en el trabajo práctico con datos vectoriales usando GeoPandas y otras bibliotecas de Python. 
+Para regenerar los `.ipynb` a partir de los `.py`, consulta el [flujo de trabajo](../README.md#flujo-de-trabajo-py-es-la-fuente-ipynb-se-genera).
