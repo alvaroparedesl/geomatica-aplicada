@@ -1,38 +1,66 @@
 # %% [markdown]
 # # Datos Raster: Conceptos Básicos
 #
+# [![Abrir en Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/alvaroparedesl/geomatica-aplicada/blob/main/notebooks/02_raster/01_datos_raster.ipynb) [![Licencia: GPL-3.0](https://img.shields.io/badge/licencia-GPL--3.0-blue.svg)](https://github.com/alvaroparedesl/geomatica-aplicada/blob/main/LICENSE) [![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://colab.research.google.com/) [![Último commit](https://img.shields.io/github/last-commit/alvaroparedesl/geomatica-aplicada?label=%C3%BAltimo%20commit)](https://github.com/alvaroparedesl/geomatica-aplicada/commits/main)
+#
 # En este cuaderno aprenderemos los conceptos fundamentales de los datos raster, su estructura y cómo manipularlos con Python.
 
 # %% [markdown]
 # ## Configuración del entorno
+#
+# Primero preparamos el entorno: la celda `Preparar entorno` deja disponible la carpeta `utils/` del curso, donde guardamos funciones de apoyo (aquí usaremos `conectar_catalogo` para conectarnos a Planetary Computer).
 
+# %%
+# @title Preparar entorno (ejecutar primero)
+import subprocess
+import sys
+from pathlib import Path
+
+if "google.colab" in sys.modules:  # Colab: clonar el repositorio (solo la primera vez)
+    RAIZ = Path("/content/geomatica-aplicada")
+    if not RAIZ.exists():
+        subprocess.run(["git", "clone", "-q", "--depth", "1",
+                        "https://github.com/alvaroparedesl/geomatica-aplicada", str(RAIZ)], check=True)
+else:  # Local: subir desde la carpeta actual hasta encontrar utils/
+    RAIZ = next(p for p in [Path.cwd(), *Path.cwd().parents] if (p / "utils").is_dir())
+sys.path.insert(0, str(RAIZ))
 
 # %%
 # @title Instalación de paquetes necesarios
 # Necesitamos instalar las librerías necesarias para trabajar con datos raster.
-# %pip install rioxarray xarray matplotlib numpy rasterio xarray-spatial geopandas
+# %pip install -q rioxarray xarray matplotlib numpy rasterio xarray-spatial geopandas pystac-client planetary-computer odc-stac
 
 # %%
 # @title Importación de bibliotecas
-# Para trabajar con este notebook en Google Colab, debemos importar las librerías y clonar el repositorio completo para tener acceso a todos los datos y archivos necesarios:
-#
+# Los datos reales (cobertura de suelo y modelo de elevación) los descargaremos desde el
+# catálogo STAC de Microsoft Planetary Computer, por lo que no necesitamos archivos locales.
 import os
 
 import matplotlib.pyplot as plt
 import numpy as np
-import rioxarray as rxr
+import odc.stac
+import rioxarray as rxr  # noqa: F401  (activa el accesor .rio)
 import xarray as xr
+from matplotlib.colors import BoundaryNorm, ListedColormap
+from matplotlib.patches import Patch
 
 # Importamos xarray-spatial para cálculos de productos derivados de DEM
 import xrspatial
+
+# Función de apoyo del curso (carpeta utils/)
+from utils.stac import conectar_catalogo
 
 # Configuración para visualización
 plt.rcParams["figure.figsize"] = (12, 8)
 plt.style.use("ggplot")
 
-# Clonamos el repositorio
-os.system("git clone https://github.com/alvaroparedesl/geomatica-aplicada.git")
-# %cd geomatica-aplicada
+# Conexión al catálogo STAC de Microsoft Planetary Computer
+# (firma automáticamente las URLs de descarga; en el cuaderno 03 vemos cómo se hace paso a paso)
+catalogo = conectar_catalogo("planetary")
+
+# Área de estudio: precordillera al este de Santiago (cuenca del Maipo), Chile central.
+# Es un área pequeña, con relieve marcado y distintas coberturas (ciudad, matorral, cultivos).
+bbox = [-70.60, -33.55, -70.45, -33.40]  # [oeste, sur, este, norte]
 
 
 # %% [markdown]
@@ -101,20 +129,55 @@ plt.show()
 # %% [markdown]
 # ## 4. Trabajando con datos reales: Cobertura de suelo de Chile
 #
-# Vamos a trabajar con un archivo de cobertura de suelo de Chile, que es un subconjunto del proyecto MapBiomas para el año 2018. MapBiomas es una iniciativa que mapea la cobertura y uso del suelo en América Latina utilizando imágenes satelitales.
+# Vamos a trabajar con datos de cobertura de suelo de la zona central de Chile (precordillera de Santiago, cuenca del Maipo). Usaremos el producto **ESA WorldCover** (año 2021, 10 m de resolución), que clasifica la superficie terrestre a partir de imágenes satelitales Sentinel-1 y Sentinel-2.
 #
-# Al haber clonado el repositorio, tenemos acceso directo al archivo de cobertura de suelo:
+# En lugar de descargar un archivo, lo buscaremos en el catálogo STAC de Microsoft Planetary Computer (colección `esa-worldcover`) y cargaremos solo el área que nos interesa:
 
 # %%
-# Ruta al archivo de cobertura de suelo
-archivo_cobertura = "data/raster/chile_coverage_2018s.tif"
+# Buscamos el producto de cobertura de suelo que cubre nuestra área de estudio
+busqueda_cobertura = catalogo.search(
+    collections=["esa-worldcover"],
+    bbox=bbox,
+    datetime="2021-01-01/2021-12-31",
+)
+items_cobertura = busqueda_cobertura.item_collection()
+print(f"Productos de cobertura encontrados: {len(items_cobertura)}")
 
 # %% [markdown]
 # ### Cargando y explorando los datos de cobertura de suelo
 
 # %%
-# Cargamos el archivo de cobertura con rioxarray
-cobertura = rxr.open_rasterio(archivo_cobertura)
+# Cargamos la cobertura (solo el área del bbox) con odc-stac.
+# Usamos remuestreo "nearest" porque son clases (categorías), no valores continuos.
+cobertura = odc.stac.load(
+    items_cobertura,
+    bands=["map"],
+    bbox=bbox,
+    resampling="nearest",
+)["map"].isel(time=0).compute()
+
+# Renombramos las dimensiones a x/y y asignamos el sistema de coordenadas (lat/lon, WGS84)
+cobertura = cobertura.rename({"longitude": "x", "latitude": "y"}).rio.write_crs("EPSG:4326")
+
+# Clases de ESA WorldCover: valor -> (nombre, color)
+clases_cobertura = {
+    10: ("Bosque", "#006400"),
+    20: ("Matorral", "#FFBB22"),
+    30: ("Pastizal", "#FFFF4C"),
+    40: ("Cultivos", "#F096FF"),
+    50: ("Áreas construidas", "#FA0000"),
+    60: ("Suelo desnudo / vegetación escasa", "#B4B4B4"),
+    70: ("Nieve y hielo", "#F0F0F0"),
+    80: ("Agua permanente", "#0064C8"),
+    90: ("Humedal herbáceo", "#0096A0"),
+    95: ("Manglar", "#00CF75"),
+    100: ("Musgo y líquenes", "#FAE6A0"),
+}
+valores_clases = list(clases_cobertura.keys())
+cmap_cobertura = ListedColormap([c for _, c in clases_cobertura.values()])
+norm_cobertura = BoundaryNorm(
+    [v - 0.5 for v in valores_clases] + [valores_clases[-1] + 0.5], cmap_cobertura.N
+)
 
 # Información básica del raster
 print("Información del raster de cobertura de suelo:")
@@ -125,11 +188,19 @@ print(f"Bounds: {cobertura.rio.bounds()}")
 
 # Visualizamos la cobertura
 plt.figure(figsize=(12, 8))
-im = cobertura.squeeze().plot(cmap="terrain", add_colorbar=False)
-plt.title("Cobertura de Suelo de Chile (2018)")
+im = cobertura.plot(cmap=cmap_cobertura, norm=norm_cobertura, add_colorbar=False)
+plt.title("Cobertura de Suelo - Precordillera de Santiago (ESA WorldCover 2021)")
 plt.xlabel("Longitud")
 plt.ylabel("Latitud")
-plt.colorbar(im, label="Clase de cobertura")
+presentes = [v for v in valores_clases if v in np.unique(cobertura.values)]
+plt.legend(
+    handles=[
+        Patch(color=clases_cobertura[v][1], label=f"{v} - {clases_cobertura[v][0]}")
+        for v in presentes
+    ],
+    loc="center left",
+    bbox_to_anchor=(1, 0.5),
+)
 plt.show()
 
 # Calculamos estadísticas básicas
@@ -140,24 +211,23 @@ print(f"Clases de cobertura presentes: {valores_unicos}")
 # %% [markdown]
 # ¿Qué significan estos valores?
 #
-# | Clase Nivel 2                     | DV  |
-# |-----------------------------------|-----|
-# | 1.1 Bosque                       | 3   |
-# | 2.1 Humedal                      | 11  |
-# | 2.2 Pastizal                     | 12  |
-# | 2.3 Matorral                     | 66  |
-# | 2.4 Afloramiento rocoso          | 29  |
-# | 3.1 Plantación Forestal          | 9   |
-# | 3.2 Mosaico de agricultura y pastura | 21  |
-# | 4.1 Infraestructura              | 24  |
-# | 4.2 Arenas, Playas y Dunas       | 23  |
-# | 4.3 Salar                        | 61  |
-# | 4.4 Otra área sin vegetación     | 25  |
-# | 5.1 Río, lago u océano           | 33  |
-# | 5.2 Hielo y nieve                | 34  |
-# | No observado                     | 27  |
+# | Valor | Clase (ESA WorldCover) |
+# |-------|------------------------|
+# | 10    | Bosque                 |
+# | 20    | Matorral               |
+# | 30    | Pastizal               |
+# | 40    | Cultivos               |
+# | 50    | Áreas construidas      |
+# | 60    | Suelo desnudo / vegetación escasa |
+# | 70    | Nieve y hielo          |
+# | 80    | Agua permanente        |
+# | 90    | Humedal herbáceo       |
+# | 95    | Manglar                |
+# | 100   | Musgo y líquenes       |
 #
-# Información detallada la podemos encontrar en este [linl](https://chile.mapbiomas.org/codigos-de-la-leyenda/)
+# Información detallada la puedes encontrar en la [página de ESA WorldCover](https://esa-worldcover.org/en).
+# Para el caso de Chile, también existe el proyecto [MapBiomas Chile](https://chile.mapbiomas.org/codigos-de-la-leyenda/), con una leyenda propia.
+
 # %% [markdown]
 # ## 5. Operaciones básicas con rasters
 #
@@ -174,12 +244,13 @@ raster_recortado = cobertura.rio.clip_box(
 
 # Visualizamos el recorte
 plt.figure(figsize=(10, 8))
-im = raster_recortado.squeeze().plot(add_colorbar=False)
+im = raster_recortado.plot(cmap=cmap_cobertura, norm=norm_cobertura, add_colorbar=False)
 plt.title("Área de Interés Recortada")
-plt.colorbar(im)
 plt.show()
 
 # 2. Cálculo de estadísticas básicas
+# Nota: aquí los valores son códigos de clase (categorías), por lo que el promedio
+# y la desviación estándar son solo un ejercicio de sintaxis; no tienen interpretación física.
 print("\nEstadísticas del raster:")
 print(f"Valor mínimo: {cobertura.min().values}")
 print(f"Valor máximo: {cobertura.max().values}")
@@ -190,11 +261,17 @@ print(f"Desviación estándar: {cobertura.std().values:.2f}")
 # ## 6. Análisis de terreno con xarray-spatial
 #
 # Si estamos trabajando con un DEM, podemos utilizar xarray-spatial para calcular productos derivados como pendiente, orientación y sombreado del relieve.
+#
+# Para el modelo digital de elevación usaremos el **Copernicus DEM GLO-30** (30 m de resolución), disponible en Planetary Computer como la colección `cop-dem-glo-30`.
 
 # %%
-archivo_dem = "data/raster/Copernicus_DSM_COG_10_S35_00_W072_00_DEM.tif.tif"
+# Buscamos y cargamos el DEM para la misma área de estudio
+busqueda_dem = catalogo.search(collections=["cop-dem-glo-30"], bbox=bbox)
+items_dem = busqueda_dem.item_collection()
+print(f"Tiles de DEM encontrados: {len(items_dem)}")
 
-dem = rxr.open_rasterio(archivo_cobertura).squeeze()
+dem = odc.stac.load(items_dem, bands=["data"], bbox=bbox)["data"].isel(time=0).compute()
+dem = dem.rename({"longitude": "x", "latitude": "y"}).rio.write_crs("EPSG:4326")
 
 # Visualizamos el DEM
 plt.figure(figsize=(12, 8))
@@ -205,6 +282,7 @@ plt.show()
 
 # %%
 # Antes de calcular algunos derivados, vamos a reproyectar el DEM ¿por qué?
+# (pista: las pendientes necesitan que x, y y la elevación estén en las mismas unidades, metros)
 dem = dem.rio.reproject("EPSG:32719")
 # %%
 # Calculamos la pendiente con xarray-spatial
@@ -241,9 +319,8 @@ plt.show()
 
 # Visualización combinada: DEM con sombreado
 fig, ax = plt.subplots(figsize=(12, 8))
-dem_data = cobertura.squeeze()
-dem_plot = dem_data.plot(cmap="terrain", alpha=0.6, ax=ax, add_colorbar=False)
-sombreado.plot.imshow(cmap="gray", alpha=0.4, ax=ax)
+dem_plot = dem.plot(cmap="terrain", alpha=0.6, ax=ax, add_colorbar=False)
+sombreado.plot.imshow(cmap="gray", alpha=0.4, ax=ax, add_colorbar=False)
 plt.title("DEM con Sombreado del Relieve")
 plt.colorbar(dem_plot, label="Elevación (m)")
 plt.show()
@@ -276,7 +353,7 @@ print(f"Raster guardado en: {raster_path}")
 #
 # * Qué son los datos raster y sus componentes principales
 # * Cómo crear y visualizar rasters con xarray y rioxarray
-# * Cómo trabajar con datos reales de cobertura de suelo de Chile
+# * Cómo cargar datos reales (cobertura de suelo y DEM de Chile central) desde un catálogo STAC
 # * Operaciones básicas: recorte y estadísticas
 # * Análisis de terreno con xarray-spatial: pendiente, orientación y sombreado
 # * Guardar rasters procesados
@@ -286,8 +363,7 @@ print(f"Raster guardado en: {raster_path}")
 # %% [markdown]
 # ## Ejercicios
 #
-# 1. Descarga otro conjunto de datos raster (por ejemplo, un DEM de otra región de Chile) y realiza un análisis básico.
+# 1. Cambia el `bbox` para cargar el DEM de otra región de Chile desde Planetary Computer y realiza un análisis básico.
 # 2. Si trabajas con datos de cobertura de suelo, calcula el porcentaje de cada clase de cobertura en el área de estudio.
 # 3. Utiliza xarray-spatial para calcular otros productos derivados del DEM, como la curvatura o la rugosidad del terreno.
-# 4. Crea un mapa que combine la cobertura de suelo con el sombreado del relieve para visualizar mejor la relación entre el uso del suelo y la topografía.
 # 4. Crea un mapa que combine la cobertura de suelo con el sombreado del relieve para visualizar mejor la relación entre el uso del suelo y la topografía.
