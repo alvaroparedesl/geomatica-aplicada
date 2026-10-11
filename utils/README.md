@@ -139,13 +139,14 @@ guardarla y `herramientas`/`usar` siguen funcionando.
 | `mostrar_mascaras(mascaras, ncols)` | Máscaras booleanas con conteo de píxeles |
 | `graficar_histogramas(dataset, bandas, ...)` | Histogramas por banda (matplotlib) |
 | `histograma_interactivo(dataset, bandas, rango, bins)` | Histogramas superpuestos (plotly) |
+| `graficar_tabla_series(tabla, variables, columna_id, fecha, puntos, suavizado, ...)` | Tabla de series en formato ancho (`cargar_series`): un panel por variable, una línea con marcadores por punto, leyenda con `nombre`, filtro opcional de puntos y media móvil opcional (`suavizado="30D"`). Devuelve `(fig, ejes)` (matplotlib) |
 | `graficar_series_temporales(serie, ...)` | Series temporales por punto o grupo (plotly) |
 | `graficar_series_puntos(datos, coordenadas, variables)` | Atajo: series temporales desde una lista de [x, y] |
 | `mostrar_imagen_interactiva(datos, modo, indice_tiempo)` | RGB / falso color / NDVI / EVI interactivo |
 | `explorador_imagenes(datos)` | Menús para elegir fecha y tipo de imagen |
 | `graficar_capas(capas, titulo)` | Varias capas vectoriales superpuestas |
 | `mapa_bbox(bbox, zoom)` | Mapa folium con el área de estudio |
-| `mapa_puntos(puntos, zoom, radio_m)` | Mapa folium con los puntos de muestreo, una capa y un color por tipo (folium se importa al usarla) |
+| `mapa_puntos(puntos, zoom, radio_m, ancho, alto, popup, ancho_popup)` | Mapa folium con los puntos de muestreo, una capa y un color por tipo (folium se importa al usarla). `popup` personaliza el cuadro emergente: una lista de columnas (texto escapado), una función `fila -> html` o un diccionario `{id: html}`; sin `popup` muestra nombre, id, tipo y coordenadas |
 | `serie_interactiva(tabla, variable, ...)` | Series por punto con hvplot/Bokeh (zoom, valores al pasar el mouse; hvplot se importa al usarla) |
 | `SelectorRegion(imagen_rgb, bbox)` | Mapa para dibujar un rectángulo (ipyleaflet) |
 

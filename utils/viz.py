@@ -8,6 +8,7 @@ muestran la figura; con False la devuelven, por si quieres guardarla o modificar
 """
 
 import base64
+import html
 import io
 
 import matplotlib.pyplot as plt
@@ -15,9 +16,11 @@ import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
+from matplotlib.lines import Line2D
 from plotly.subplots import make_subplots
 
 from .raster import extraer_series_puntos
+from .series import rolling_media
 
 # Nombre, longitud de onda y color de cada banda (Sentinel-2 y Landsat)
 INFO_BANDAS = {
@@ -38,6 +41,9 @@ INFO_BANDAS = {
 }
 
 COLORES_PUNTOS = ["green", "red", "blue", "orange", "purple", "cyan"]
+
+# Paleta Okabe-Ito, que se distingue bien con daltonismo (para series con varias líneas)
+PALETA_OKABE_ITO = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9"]
 
 
 def _finalizar(fig, mostrar):
@@ -218,6 +224,92 @@ def graficar_histogramas(dataset, bandas, titulo="Histogramas por banda", bins=5
     fig.suptitle(titulo, fontsize=16)
     fig.tight_layout()
     return _finalizar_mpl(fig, mostrar)
+
+
+def graficar_tabla_series(
+    tabla,
+    variables,
+    columna_id="id",
+    fecha="fecha",
+    puntos=None,
+    suavizado=None,
+    minimo=3,
+    colores=None,
+    etiquetas=None,
+    titulo=None,
+    mostrar=True,
+):
+    """
+    Un panel por variable y una línea por punto, con las observaciones como marcadores.
+
+    Sirve para la tabla de series en formato ancho (una fila por punto y fecha, por
+    ejemplo el resultado de `utils.series.cargar_series`). Las fechas de Sentinel-2 son
+    irregulares, así que cada observación lleva un marcador y las fechas sin valor
+    (NaN) se omiten. Si la tabla tiene la columna `nombre`, la leyenda usa los nombres
+    en vez de los id.
+
+    Args:
+        tabla (pandas.DataFrame): Una fila por punto y fecha.
+        variables (list): Columnas a graficar, una por panel ("ndwi", "ndci", ...).
+        columna_id (str): Columna que distingue las líneas.
+        fecha (str): Columna de fechas.
+        puntos (list, optional): Solo estos valores de `columna_id`. Por defecto todos.
+        suavizado (str o int, optional): Si se indica, agrega la media móvil de cada punto
+            (`utils.series.rolling_media`): un texto como "30D" son días de calendario y un
+            entero son observaciones.
+        minimo (int): Observaciones mínimas dentro de la ventana de `suavizado`.
+        colores (list, optional): Un color por punto. Por defecto, la paleta Okabe-Ito.
+        etiquetas (dict, optional): {variable: texto del eje Y}. Por defecto, el nombre de la columna.
+        titulo (str, optional): Título general.
+        mostrar (bool): Si es True, muestra la figura (`plt.show()`). En ambos casos
+            devuelve la figura y los ejes, por si quieres modificarlos.
+
+    Returns:
+        tuple: `(fig, ejes)`: la figura de matplotlib y el arreglo con un eje por variable.
+
+    Ejemplo:
+        fig, ejes = graficar_tabla_series(tabla, ["ndwi", "b04"], puntos=["biobio_pluma"], suavizado="30D")
+    """
+    variables = list(variables)
+    faltan = [c for c in [columna_id, fecha, *variables] if c not in tabla.columns]
+    if faltan:
+        raise ValueError(f"La tabla no tiene las columnas {faltan}.")
+    if puntos is not None:
+        desconocidos = [p for p in puntos if p not in tabla[columna_id].values]
+        if desconocidos:
+            raise ValueError(f"No hay datos de los puntos {desconocidos} en la columna '{columna_id}'.")
+        tabla = tabla[tabla[columna_id].isin(puntos)]
+    colores = colores or PALETA_OKABE_ITO
+    etiquetas = etiquetas or {}
+    nombres = tabla.drop_duplicates(columna_id).set_index(columna_id)["nombre"] if "nombre" in tabla.columns else None
+
+    fig, ejes = plt.subplots(len(variables), 1, figsize=(11, 2.8 * len(variables) + 0.6),
+                             sharex=True, squeeze=False, layout="constrained")
+    ejes = ejes[:, 0]
+    for eje, variable in zip(ejes, variables):
+        for i, (id_punto, datos) in enumerate(tabla.groupby(columna_id, sort=False)):
+            color = colores[i % len(colores)]
+            nombre = nombres[id_punto] if nombres is not None else id_punto
+            serie = datos.dropna(subset=[variable]).set_index(fecha)[variable].sort_index()
+            if suavizado is None:
+                eje.plot(serie.index, serie, marker="o", markersize=3, linewidth=0.8, color=color, label=nombre)
+            else:  # las observaciones quedan tenues y la media móvil resalta
+                eje.plot(serie.index, serie, marker="o", markersize=3, linewidth=0.6, alpha=0.5, color=color, label=nombre)
+                movil = rolling_media(serie, suavizado, minimo=minimo)
+                eje.plot(movil.index, movil, linewidth=2, color=color)
+        eje.set_ylabel(etiquetas.get(variable, variable), fontsize=9)
+        eje.grid(alpha=0.3)
+
+    marcas, textos = ejes[0].get_legend_handles_labels()
+    if suavizado is not None:
+        marcas.append(Line2D([], [], color="0.3", linewidth=2))
+        textos.append(f"media móvil ({suavizado})")
+    fig.legend(marcas, textos, loc="outside right center", fontsize=8)
+    if titulo:
+        fig.suptitle(titulo)
+    if mostrar:
+        plt.show()
+    return fig, ejes
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +510,28 @@ def mapa_bbox(bbox, zoom=10, ancho=800, alto=400):
     return mapa
 
 
-def mapa_puntos(puntos, zoom=None, radio_m=None, ancho=800, alto=500):
+def _popup_de_columnas(fila, columnas):
+    """HTML de un popup con el nombre en negrita y una línea "columna: valor" por columna (texto escapado)."""
+    lineas = [f"<b>{html.escape(str(fila['nombre']), quote=False)}</b>"] if "nombre" in fila.index else []
+    for columna in columnas:
+        valor = fila[columna]
+        texto = f"{valor:.4f}" if isinstance(valor, float) else str(valor)
+        lineas.append(f"{html.escape(columna, quote=False)}: {html.escape(texto, quote=False)}")
+    return "<br>".join(lineas)
+
+
+def _texto_popup(fila, popup):
+    """El HTML del popup de un punto según `popup` (lista de columnas, función o diccionario)."""
+    if callable(popup):
+        return popup(fila)
+    if isinstance(popup, dict):
+        if fila["id"] in popup:
+            return popup[fila["id"]]
+        return _popup_de_columnas(fila, ["id", "tipo", "lat", "lon"])  # un punto sin texto propio conserva el popup básico
+    return _popup_de_columnas(fila, popup)
+
+
+def mapa_puntos(puntos, zoom=None, radio_m=None, ancho=800, alto=500, popup=None, ancho_popup=300):
     """
     Mapa de folium con los puntos de muestreo, un color por `tipo` de punto.
 
@@ -433,6 +546,19 @@ def mapa_puntos(puntos, zoom=None, radio_m=None, ancho=800, alto=500):
         radio_m (float, optional): Si se indica, dibuja un círculo con ese radio
             (la ventana de la que se resume cada serie).
         ancho, alto (int): Tamaño del mapa en píxeles.
+        popup (list, callable o dict, optional): Contenido del cuadro emergente de cada punto.
+            Si se omite, muestra nombre, id, tipo y coordenadas. Puede ser:
+
+            * una lista de columnas de `puntos` (por ejemplo ["tipo", "lat"]): el nombre en
+              negrita y una línea "columna: valor" por columna; el texto se escapa, así que
+              un `<` dentro de un valor se muestra como texto y no se interpreta como HTML;
+            * una función `fila -> html` que recibe la fila del punto (una `pandas.Series`,
+              con `fila["id"]` o `fila.id`) y devuelve el HTML;
+            * un diccionario `{id: html}`; los puntos que no aparecen conservan el popup básico.
+
+            El HTML que armas tú (función o diccionario) se usa tal cual: escapa tú los textos
+            que vengan de datos con `html.escape`.
+        ancho_popup (int): Ancho máximo del cuadro emergente, en píxeles.
 
     Returns:
         folium.Map: Escribe el nombre de la variable al final de la celda para verlo.
@@ -458,14 +584,18 @@ def mapa_puntos(puntos, zoom=None, radio_m=None, ancho=800, alto=500):
     for i, (tipo, grupo) in enumerate(puntos.groupby("tipo", sort=False)):
         color = COLORES_PUNTOS[i % len(COLORES_PUNTOS)]
         capa = folium.FeatureGroup(name=f"{tipo} ({len(grupo)})").add_to(mapa)
-        for fila in grupo.itertuples():
-            texto = f"<b>{fila.nombre}</b><br>id: {fila.id}<br>tipo: {fila.tipo}<br>lat {fila.lat:.4f}, lon {fila.lon:.4f}"
+        for _, fila in grupo.iterrows():
+            if popup is None:
+                texto = (f"<b>{html.escape(str(fila['nombre']), quote=False)}</b><br>id: {html.escape(str(fila['id']), quote=False)}"
+                         f"<br>tipo: {html.escape(str(fila['tipo']), quote=False)}<br>lat {fila['lat']:.4f}, lon {fila['lon']:.4f}")
+            else:
+                texto = _texto_popup(fila, popup)
             folium.CircleMarker(
-                [fila.lat, fila.lon], radius=7, color="white", weight=2, fill=True, fill_color=color,
-                fill_opacity=0.95, tooltip=fila.nombre, popup=folium.Popup(texto, max_width=300),
+                [fila["lat"], fila["lon"]], radius=7, color="white", weight=2, fill=True, fill_color=color,
+                fill_opacity=0.95, tooltip=html.escape(str(fila["nombre"]), quote=False), popup=folium.Popup(texto, max_width=ancho_popup),
             ).add_to(capa)
             if radio_m:
-                folium.Circle([fila.lat, fila.lon], radius=radio_m, color=color, weight=1, fill=False).add_to(capa)
+                folium.Circle([fila["lat"], fila["lon"]], radius=radio_m, color=color, weight=1, fill=False).add_to(capa)
     folium.LayerControl(collapsed=False).add_to(mapa)
     if zoom is None and len(puntos) > 1:
         mapa.fit_bounds([[puntos["lat"].min(), puntos["lon"].min()], [puntos["lat"].max(), puntos["lon"].max()]])

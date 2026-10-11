@@ -388,3 +388,71 @@ def test_serie_interactiva():
     assert len(figura.renderers) >= 4  # líneas y marcadores de dos puntos
     solo_a = hv.render(serie_interactiva(tabla, "ndwi", puntos=["a"]))
     assert 0 < len(solo_a.renderers) < len(figura.renderers)
+
+
+def _tabla_ancha():
+    fechas = pd.date_range("2025-10-01", periods=8, freq="9D")
+    filas = []
+    for k, (id_punto, nombre) in enumerate([("a", "Bahía A"), ("b", "Laguna B"), ("c", "Golfo C")]):
+        for i, f in enumerate(fechas):
+            filas.append({"id": id_punto, "nombre": nombre, "fecha": f, "ndwi": 0.1 * k + 0.01 * i,
+                          "b04": np.nan if (id_punto == "b" and i == 3) else 0.05 + 0.01 * k})
+    return pd.DataFrame(filas)
+
+
+def test_graficar_tabla_series():
+    import matplotlib
+
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
+    from utils.viz import graficar_tabla_series
+
+    tabla = _tabla_ancha()
+    fig, ejes = graficar_tabla_series(tabla, ["ndwi", "b04"], etiquetas={"ndwi": "NDWI (agua)"}, titulo="Prueba", mostrar=False)
+    assert len(ejes) == 2 and ejes[0].get_ylabel() == "NDWI (agua)" and ejes[1].get_ylabel() == "b04"
+    assert all(len(eje.lines) == 3 for eje in ejes)  # una línea por punto
+    assert len(ejes[0].lines[0].get_xdata()) == 8
+    assert len(ejes[1].lines[1].get_xdata()) == 7  # el NaN de B04 en "b" se omite
+    assert ejes[0].lines[0].get_marker() == "o"  # las observaciones llevan marcador
+    leyenda = fig.legends[0]
+    assert [t.get_text() for t in leyenda.get_texts()] == ["Bahía A", "Laguna B", "Golfo C"]  # usa `nombre`
+    assert fig._suptitle.get_text() == "Prueba"
+    plt.close(fig)
+
+    # filtro de puntos, media móvil y tabla sin la columna `nombre`
+    fig, ejes = graficar_tabla_series(tabla.drop(columns="nombre"), ["ndwi"], puntos=["c", "a"], suavizado="30D", mostrar=False)
+    assert len(ejes[0].lines) == 4  # 2 puntos x (observaciones + media móvil)
+    assert [t.get_text() for t in fig.legends[0].get_texts()] == ["a", "c", "media móvil (30D)"]
+    plt.close(fig)
+
+    with pytest.raises(ValueError, match="columnas"):
+        graficar_tabla_series(tabla, ["ndci"], mostrar=False)
+    with pytest.raises(ValueError, match="puntos"):
+        graficar_tabla_series(tabla, ["ndwi"], puntos=["z"], mostrar=False)
+
+
+def test_mapa_puntos_popup():
+    pytest.importorskip("folium")
+    from utils.viz import mapa_puntos
+
+    puntos = _puntos_viz()
+    puntos.loc[1, "nombre"] = "Laguna <B>"
+    basico = mapa_puntos(puntos).get_root().render()
+    assert "Laguna &lt;B&gt;" in basico and "Laguna <B>" not in basico  # escapa el nombre en el popup básico y en el tooltip
+    assert "id: a" in basico and "tipo: bahia" in basico and "lat -36.6900" in basico
+
+    # lista de columnas: nombre, "columna: valor", números redondeados y texto escapado
+    puntos["nota"] = ["ok", "valor < 3 & más", "ok"]
+    html = mapa_puntos(puntos, popup=["tipo", "nota", "lat"]).get_root().render()
+    assert "tipo: laguna" in html and "nota: valor &lt; 3 &amp; más" in html and "lat: -36.8500" in html
+    assert "valor < 3" not in html
+    assert "id: a" not in html  # solo las columnas pedidas
+
+    # función fila -> html: se usa tal cual
+    html = mapa_puntos(puntos, popup=lambda fila: f"<i>punto {fila.id} en {fila['tipo']}</i>").get_root().render()
+    assert "<i>punto a en bahia</i>" in html and "<i>punto b en laguna</i>" in html
+
+    # diccionario id -> html: los puntos que faltan conservan el popup básico
+    html = mapa_puntos(puntos, popup={"a": "<b>solo A</b>"}).get_root().render()
+    assert "<b>solo A</b>" in html and "id: b" in html and "id: a" not in html
