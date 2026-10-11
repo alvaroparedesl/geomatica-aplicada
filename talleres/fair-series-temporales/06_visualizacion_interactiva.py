@@ -253,10 +253,17 @@ def miniatura_png(id_punto, variable):
     return base64.b64encode(memoria.getvalue()).decode()
 
 
+def popup_punto(fila):
+    """HTML del popup de un punto (una fila de `puntos`): resumen y miniatura. NDVI para el humedal y NDWI para el resto."""
+    variable = "ndvi" if fila.tipo == "humedal" else "ndwi"
+    return (f"<b>{fila.nombre}</b><br>tipo: {fila.tipo}<br>{resumen_html(fila.id)}"
+            f"<img src='data:image/png;base64,{miniatura_png(fila.id, variable)}' width='290'>")
+
+
 print(resumen_html("humedal_rocuant"))
 
 # %% [markdown]
-# Y el mapa. Cada punto es un `folium.CircleMarker`; el popup es un `folium.Popup` con el HTML. Variable de la miniatura: NDVI para el humedal y NDWI para el resto.
+# Y el mapa. Cada punto es un `folium.CircleMarker`; el popup es un `folium.Popup` con el HTML de `popup_punto`.
 
 # %%
 mapa = folium.Map(location=[puntos["lat"].mean(), puntos["lon"].mean()], zoom_start=10, tiles=None)
@@ -265,9 +272,7 @@ folium.TileLayer(tiles="https://server.arcgisonline.com/ArcGIS/rest/services/Wor
                  attr="Esri, Maxar, Earthstar Geographics", name="Imagen satelital (Esri)").add_to(mapa)
 
 for fila in puntos.itertuples():
-    variable = "ndvi" if fila.tipo == "humedal" else "ndwi"
-    html = (f"<b>{fila.nombre}</b><br>tipo: {fila.tipo}<br>{resumen_html(fila.id)}"
-            f"<img src='data:image/png;base64,{miniatura_png(fila.id, variable)}' width='290'>")
+    html = popup_punto(fila)
     folium.CircleMarker(
         [fila.lat, fila.lon], radius=8, color="white", weight=2, fill=True, fill_color=colores[fila.id], fill_opacity=0.95,
         tooltip=fila.nombre, popup=folium.Popup(folium.IFrame(html, width=330, height=330), max_width=340),
@@ -281,6 +286,12 @@ mapa
 # %% [markdown]
 # Haz clic en cada punto. Pasa de un lado a otro de la zona y compara: el popup de la pluma del Biobío frente al del golfo de Arauco, el humedal frente a la laguna. Cambia la capa base a la imagen satelital para ver qué hay alrededor.
 #
+# **El mismo resultado con el helper.** `mapa_puntos` acepta el argumento `popup`: una lista de columnas, un diccionario `{id: html}` o, como aquí, una **función** que recibe la fila de cada punto y devuelve el HTML. Así el bucle de folium desaparece y solo queda lo que cambia: el contenido del popup. (El helper colorea por tipo de punto y no por punto, y agrega la capa de cada tipo.)
+
+# %%
+mapa_puntos(puntos, radio_m=150, popup=popup_punto, ancho_popup=340)
+
+# %% [markdown]
 # **Tu turno 3.** Agrega NDCI a la tabla del popup, o cambia el color del marcador según la mediana de NDCI (por ejemplo con `branca.colormap`, que viene con folium). Guarda el mapa como HTML con `mapa.save("mapa_puntos.html")`.
 
 # %%

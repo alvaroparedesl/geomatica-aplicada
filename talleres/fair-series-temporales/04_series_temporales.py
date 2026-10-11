@@ -78,7 +78,7 @@ from utils.series import (BANDAS_SERIES, agregar_nubes_escena, bbox_punto, bbox_
                           resumen_validez)
 from utils.stac import (agregar_offset, conectar_catalogo, parametros_busqueda, parametros_carga, preparar_items,
                         renombrar_bandas, resumir_imagenes)
-from utils.viz import mapa_puntos
+from utils.viz import graficar_tabla_series, mapa_puntos
 
 warnings.filterwarnings("ignore", category=UserWarning)  # avisos de GDAL por escenas sin georreferencia
 
@@ -468,21 +468,12 @@ print("Diferencia máxima por variable:", diferencia.round(6).to_dict())
 #
 # El respaldo tiene tres filas más, todas del **golfo de Arauco**. Ese punto cae donde se traslapan dos escenas el mismo día. El respaldo se buscó con un filtro de escena de 60 %, así que de cada par entró solo la escena despejada. Nosotros cargamos las dos (límite 100 %) y `nubes_escena` es el **promedio** de ambas, que en esas tres fechas pasa de 60 %. Es un ejemplo de por qué el filtro de escena depende de dónde cae tu punto, no solo del punto.
 #
-# Ahora el gráfico de las cuatro variables, un panel por variable y un color por punto. Los marcadores son las **observaciones** (no hay datos entre ellos).
+# Ahora el gráfico de las cuatro variables, un panel por variable y un color por punto, con `graficar_tabla_series` (de `utils/viz.py`, hecho con `matplotlib`). Los marcadores son las **observaciones** (no hay datos entre ellos).
 
 # %%
 etiquetas = {"ndwi": "NDWI (agua)", "ndci": "NDCI (clorofila)", "b04": "B04, reflectancia roja (turbidez)", "ndvi": "NDVI (vegetación)"}
-fig, ejes = plt.subplots(4, 1, figsize=(10, 11), sharex=True)
-for eje, (variable, etiqueta) in zip(ejes, etiquetas.items()):
-    for color, (id_punto, datos) in zip(PALETA, respaldo.groupby("id", sort=False)):
-        datos = datos.dropna(subset=[variable])
-        eje.plot(datos["fecha"], datos[variable], marker="o", markersize=3, linewidth=0.8, color=color, label=id_punto)
-    eje.set_ylabel(etiqueta, fontsize=9)
-    eje.grid(alpha=0.3)
-fig.legend(*ejes[0].get_legend_handles_labels(), ncol=6, fontsize=8, loc="upper center", bbox_to_anchor=(0.5, 0.975))
-fig.suptitle("Series Sentinel-2 por punto, octubre de 2025 a septiembre de 2026")
-plt.tight_layout(rect=[0, 0, 1, 0.96])
-plt.show()
+fig, ejes = graficar_tabla_series(respaldo, list(etiquetas), etiquetas=etiquetas, colores=PALETA,
+                                  titulo="Series Sentinel-2 por punto, octubre de 2025 a septiembre de 2026")
 
 # %% [markdown]
 # **Cómo mirarlo.** El humedal (NDVI alto, NDWI muy negativo) separa tierra de agua. Entre los puntos de agua, la pluma del Biobío tiene la mediana de reflectancia roja más alta. En el bloque 5 medimos todo esto con números; en el 6 lo hacemos interactivo.
