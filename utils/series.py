@@ -120,7 +120,7 @@ def bbox_punto(lon, lat, radio_m=150):
 def bbox_puntos(puntos, radio_m=150):
     """Rectángulo [oeste, sur, este, norte] que contiene las ventanas de todos los puntos (para una sola búsqueda STAC)."""
     cajas = np.array([bbox_punto(p.lon, p.lat, radio_m) for p in puntos.itertuples()])
-    return [cajas[:, 0].min(), cajas[:, 1].min(), cajas[:, 2].max(), cajas[:, 3].max()]
+    return [float(cajas[:, 0].min()), float(cajas[:, 1].min()), float(cajas[:, 2].max()), float(cajas[:, 3].max())]
 
 
 def items_de_punto(items, bbox):
