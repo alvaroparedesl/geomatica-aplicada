@@ -7,7 +7,11 @@ texto de cada celda coincidan con los del `.py`. Las salidas y los metadatos
 se ignoran: solo se comparan las fuentes de las celdas.
 
 Uso:
-    python scripts/verificar_notebooks.py
+    python scripts/verificar_notebooks.py            # todos los cuadernos
+    python scripts/verificar_notebooks.py a.py b.ipynb  # solo esos (pre-commit)
+
+Con rutas, revisa solo los cuadernos indicados (un .ipynb cuenta como su .py),
+así un commit parcial no falla por cuadernos que no forman parte de él.
 
 Termina con código 1 si algún cuaderno falta o está desactualizado, e indica
 el comando para regenerarlo.
@@ -49,18 +53,30 @@ def comparar(py):
     return None
 
 
-def main():
+def cuadernos(rutas):
+    """Fuentes .py a revisar: las indicadas o todas las de CARPETAS."""
+    if not rutas:
+        for carpeta in CARPETAS:
+            base = RAIZ / carpeta
+            if base.is_dir():
+                yield from sorted(base.rglob("*.py"))
+        return
+    vistos = set()
+    for ruta in rutas:
+        py = (RAIZ / ruta).with_suffix(".py")
+        if py.suffix == ".py" and py.exists() and py not in vistos:
+            vistos.add(py)
+            yield py
+
+
+def main(rutas=()):
     fallos = []
-    for carpeta in CARPETAS:
-        base = RAIZ / carpeta
-        if not base.is_dir():
+    for py in cuadernos(rutas):
+        if not es_jupytext(py):
             continue
-        for py in sorted(base.rglob("*.py")):
-            if not es_jupytext(py):
-                continue
-            problema = comparar(py)
-            if problema:
-                fallos.append((py.relative_to(RAIZ), problema))
+        problema = comparar(py)
+        if problema:
+            fallos.append((py.relative_to(RAIZ), problema))
 
     if not fallos:
         return 0
@@ -74,4 +90,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv[1:]))

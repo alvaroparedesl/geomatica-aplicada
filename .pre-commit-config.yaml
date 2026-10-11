@@ -17,8 +17,8 @@ repos:
         name: .ipynb al día respecto del .py (jupytext)
         entry: python scripts/verificar_notebooks.py
         language: system
-        files: ^(notebooks|talleres)/.*\.(py|ipynb)$|^scripts/verificar_notebooks\.py$
-        pass_filenames: false
+        files: ^(notebooks|talleres)/.*\.(py|ipynb)$
+        # Solo revisa los cuadernos del commit (ver scripts/verificar_notebooks.py).
 
       - id: sin-rayas-largas
         name: sin rayas largas (U+2014) en textos del curso
@@ -37,3 +37,6 @@ repos:
       - id: detect-private-key
       - id: check-added-large-files
         args: [--maxkb=1024]
+        # Los datos preparados de los talleres (por ejemplo la malla OISST de
+        # ~6 MB) se versionan a propósito para que Colab no dependa de descargas.
+        exclude: ^talleres/[^/]+/datos/
