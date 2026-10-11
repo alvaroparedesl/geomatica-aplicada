@@ -69,6 +69,23 @@ graficar_series_puntos(indices, [[342122, 6279477], [339600, 6276395]], ("NDVI",
 
 ## Módulos
 
+### `utils/ia.py` y `utils/mcp_dataverse.py` (servidores MCP desde Colab)
+Usan servidores MCP (Zenodo, Dataverse, OpenAlex, ...) sin programar MCP: el cuaderno
+es el cliente. Necesitan `pip install mcp` (y `google-genai`, que Colab ya trae, solo
+para `preguntar`).
+
+| Función | Qué hace |
+|---|---|
+| `herramientas(servidor)` | Lista lo que ofrece un servidor (sin clave ni IA) |
+| `usar(servidor, herramienta, **argumentos)` | Llama tú mismo a una herramienta y devuelve su texto (sin IA) |
+| `preguntar(pregunta, servidores, modelo, max_pasos, devolver)` | Pregunta en lenguaje natural: Gemini decide qué herramientas llamar y cada paso se imprime (`[paso 1] El modelo llama a zenodo.zenodo_search_records(...)`), con un prompt de sistema en español que exige usar los totales de la herramienta y decir "no consta" cuando falta un campo |
+| `SERVIDORES` | Catálogo de alias: `zenodo`, `dataverse`, `dataverse_local` (el servidor propio `utils/mcp_dataverse.py`, que se lanza como subproceso), `openalex`, `pangaea`, `nasa`, `gbif` |
+
+La clave de Gemini es **tuya**: se lee de los Secretos de Colab (`GOOGLE_API_KEY`, con
+"Acceso desde el cuaderno" activado) y, fuera de Colab, de la variable de entorno
+`GOOGLE_API_KEY`. Nunca se escribe en el cuaderno. Sin clave, `preguntar` avisa cómo
+guardarla y `herramientas`/`usar` siguen funcionando.
+
 ### `utils/vector.py`
 | Función | Qué hace |
 |---|---|
@@ -105,9 +122,11 @@ graficar_series_puntos(indices, [[342122, 6279477], [339600, 6276395]], ("NDVI",
 | `enmascarar_nubes(imagen, sensor, excluir)` | Pone NaN en nubes/sombras/relleno |
 | `preparar_reflectancia(imagen, sensor, enmascarar)` | Atajo: enmascara + convierte |
 | `calcular_ndvi / calcular_evi / calcular_ndwi(imagen, sensor)` | Índices espectrales (DataArray) |
-| `calcular_indices(imagen, sensor, indices)` | Varios índices en un Dataset |
+| `calcular_ndwi_agua(imagen, sensor)` | NDWI de McFeeters (verde y NIR), para agua abierta (no es el `NDWI` de arriba) |
+| `calcular_ndci(imagen, sensor)` | NDCI (borde rojo y rojo), clorofila en agua (solo Sentinel-2) |
+| `calcular_indices(imagen, sensor, indices)` | Varios índices en un Dataset ("NDVI", "EVI", "NDWI", "NDWI_AGUA", "NDCI") |
 | `lonlat_a_crs(lon, lat, crs)` | Transforma coordenadas geográficas a otro CRS |
-| `extraer_series_puntos(datos, puntos, columna_id)` | Serie temporal en formato largo para puntos x, y |
+| `extraer_series_puntos(datos, puntos, columna_id, radio, estadistico, crs)` | Serie temporal en formato largo para puntos con x, y o lon, lat: el píxel más cercano o, con `radio` (m), la mediana (o media, min, max) de la ventana ignorando NaN |
 | `recortar_region(imagen, limites, crs)` | Recorta con un rectángulo lon/lat |
 | `calcular_estadisticas(dataset, bandas)` | Tabla de estadísticos descriptivos por banda |
 
@@ -126,10 +145,60 @@ graficar_series_puntos(indices, [[342122, 6279477], [339600, 6276395]], ("NDVI",
 | `explorador_imagenes(datos)` | Menús para elegir fecha y tipo de imagen |
 | `graficar_capas(capas, titulo)` | Varias capas vectoriales superpuestas |
 | `mapa_bbox(bbox, zoom)` | Mapa folium con el área de estudio |
+| `mapa_puntos(puntos, zoom, radio_m)` | Mapa folium con los puntos de muestreo, una capa y un color por tipo (folium se importa al usarla) |
+| `serie_interactiva(tabla, variable, ...)` | Series por punto con hvplot/Bokeh (zoom, valores al pasar el mouse; hvplot se importa al usarla) |
 | `SelectorRegion(imagen_rgb, bbox)` | Mapa para dibujar un rectángulo (ipyleaflet) |
 
 Las funciones que dibujan aceptan `mostrar=False` para devolver la figura en
 vez de mostrarla.
+
+### `utils/datos_taller.py` (datos preparados del taller)
+| Función | Qué hace |
+|---|---|
+| `abrir_dato(nombre)` | Ruta local de un archivo de `talleres/fair-series-temporales/datos/`: la del repositorio si existe y, si no, una copia descargada de GitHub (`URL_DATOS`) a una carpeta temporal |
+
+### `utils/series.py` (series temporales por punto)
+Del cubo Sentinel-2 a la tabla de series y de la tabla al análisis. Los imports
+pesados (odc.stac, geopandas, pyarrow, scipy) están dentro de las funciones.
+
+| Función | Qué hace |
+|---|---|
+| `cargar_puntos_csv(origen)` | Lee el CSV de puntos (`id, nombre, lat, lon, tipo`), valida columnas, `id` únicos y rangos |
+| `puntos_a_geodataframe(puntos)` | GeoDataFrame EPSG:4326 (para `.explore()` o guardar GeoJSON) |
+| `bbox_punto(lon, lat, radio_m)`, `bbox_puntos(puntos, radio_m)` | Rectángulo en grados alrededor de un punto, o que cubre todos (para la búsqueda STAC) |
+| `items_de_punto(items, bbox)` | Los ítems cuya huella toca la ventana de un punto |
+| `crs_utm(lon, lat)` | CRS UTM de la zona de un punto (Concepción: EPSG:32718) |
+| `agregar_nubes_escena(datos, items)` | Coordenada `nubes_escena` (% de nubes de la escena por fecha), como `agregar_offset` |
+| `cargar_ventanas(items, puntos, bandas, radio_m, resolucion, crs, catalogo)` | Para cada punto: `bbox_punto`, `parametros_carga`, `odc.stac.load`, `renombrar_bandas`, `agregar_offset`, `agregar_nubes_escena`; devuelve `{id: Dataset}` leído en paralelo. Los pasos están en el docstring del módulo para que un cuaderno los escriba a la vista |
+| `construir_series(ventanas, puntos, radio_m, estadistico, fraccion_minima)` | Máscara SCL + reflectancia con el offset de cada fecha + NDWI, NDCI, B04 y NDVI + mediana de la ventana. Tabla ancha `COLUMNAS_SERIES` |
+| `resumen_validez(tabla, variable)` | Fechas con cobertura y fechas válidas por punto |
+| `guardar_series(tabla, ruta, metadatos)`, `cargar_series(origen)`, `leer_metadatos_series(origen)` | Parquet con metadatos dentro del archivo |
+| `serie_de_punto(tabla, punto, variable)` | La serie de un punto como `pandas.Series` |
+| `rolling_media(serie, ventana, minimo, centrada)` | Media móvil (`"30D"` sirve con fechas irregulares) |
+| `tendencia_lineal(serie)` | `Tendencia`: pendiente por año, intercepto, r2, p, n y la recta ajustada |
+| `climatologia_mensual(serie, base)` | Media, desviación y n de cada mes |
+| `anomalias_zscore(serie, referencia, base)` | z-score respecto del mismo mes (`"mes"`) o de toda la serie (`"total"`) |
+
+La tabla de series tiene una fila por punto y fecha, con `id, nombre, tipo, lat,
+lon, fecha, ndwi, ndci, b04, ndvi, nubes_escena, pixeles_validos, n_pixeles,
+offset_reflectancia`. Con un solo año de datos la climatología mensual tiene pocas
+observaciones por mes: sirve para ver el ciclo, no para anomalías robustas
+(para eso, la serie larga de OISST).
+
+### `utils/extremos.py` (olas de calor y de frío marinas)
+Método de Hobday et al. (2016) en pandas legible; validado contra `xmhw` (ver el
+docstring del módulo). Un vacío (NaN) nunca se rellena ni se puentea.
+
+| Función | Qué hace |
+|---|---|
+| `cargar_oisst(tipo)` | OISST del taller: `"punto"` (Serie diaria frente a Concepción) o `"malla"` (DataArray 24 x 20). Con los días sin dato como NaN |
+| `climatologia_hobday(serie, base, ventana, percentiles, suavizado)` | Media, p90 y p10 por día del año (1991-2020, ventana de 11 días, suavizado de 31) |
+| `aplicar_climatologia(serie, clima)`, `dia_del_anio_366(indice)` | La climatología alineada con la serie; calendario de 366 días |
+| `detectar_eventos(serie, clima, tipo, duracion_min, brecha_max)` | Tabla de eventos de `"calor"` o `"frio"`: rachas de al menos 5 días y unión de brechas de 2 días o menos (primero filtrar, después unir). Duración, intensidad, día del pico, categoría y `en_curso` |
+| `resumen_eventos(eventos, por)`, `evento_en_curso(eventos)` | Conteos por década o año; el evento activo en el último día |
+| `marcar_dias_evento(serie, eventos)`, `solapamiento(a, b)` | Días dentro de eventos (booleana) y comparación entre dos marcas (Jaccard) |
+| `frecuencia_eventos(malla, tipo, base, periodo)` | Eventos por píxel de una malla: `n_eventos`, `dias_en_evento`, `eventos_por_decada` |
+| `aislamiento_forest(serie, clima, contaminacion)` | Días atípicos con Isolation Forest (scikit-learn), para compararlos con Hobday |
 
 ## Sentinel-2: offset de reflectancia
 
@@ -230,6 +299,9 @@ reales grabados, así que la regla del offset se prueba sin conexión:
 | `test_carga_offline.py` | `parametros_carga`, `groupby`, `renombrar_bandas` y `agregar_offset` con `odc.stac.load` real sobre archivos locales; dedupe, catálogos mezclados, offsets distintos en un mismo día |
 | `test_reflectancia.py` | `convertir_a_reflectancia` con cubos sintéticos: offset por fecha, DN 0 a NaN, error al combinar fechas antes de convertir |
 | `test_general.py` | Vectorial, raster y gráficos con datos sintéticos |
+| `test_series.py` | Puntos, `extraer_series_puntos` con ventana, el flujo Sentinel-2 completo (`cargar_ventanas` + `construir_series`) con GeoTIFF locales y offsets por fecha, análisis de series, parquet, la serie preparada del taller y los gráficos (folium, hvplot) |
+| `test_extremos.py` | Hobday con series sintéticas (racha de 5 y de 4 días, brechas de 2 y 3, filtrar antes de unir, vacíos que no se puentean, frío, 29 de febrero, evento en curso), los conteos reales de OISST, comparación con `xmhw` (si está instalado), malla e Isolation Forest |
+| `test_ia.py` | Cliente MCP con un servidor falso por stdio y un "LLM" guionizado (sin internet ni clave); la parte con servidores reales lleva la marca `red` |
 | `test_red_catalogos.py` | (marca `red`, con internet) La misma toma en los catálogos reales, comparada entre sí y con Landsat; serie que cruza el cambio de baseline; flujo nativo completo; hueco de c1 |
 
 Cómo correr cada grupo:

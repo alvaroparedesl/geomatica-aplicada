@@ -368,7 +368,58 @@ def calcular_ndwi(imagen, sensor):
     )
 
 
-_INDICES = {"NDVI": calcular_ndvi, "EVI": calcular_evi, "NDWI": calcular_ndwi}
+def calcular_ndwi_agua(imagen, sensor):
+    """
+    NDWI de McFeeters = (VERDE - NIR) / (VERDE + NIR)  (cuerpos de agua)
+
+    Es el índice de agua abierta: positivo sobre el agua (el verde refleja más que
+    el NIR) y negativo sobre tierra y vegetación. No es el `NDWI` de
+    `calcular_ndwi` (NIR y SWIR, humedad de la vegetación), que se llama igual.
+
+    Args:
+        imagen (xarray.Dataset): Reflectancia.
+        sensor (str o dict): "landsat" o "sentinel-2".
+
+    Returns:
+        xarray.DataArray: NDWI_AGUA entre -1 y 1.
+    """
+    b = obtener_configuracion_sensor(sensor)["bandas"]
+    valores = _diferencia_normalizada(imagen[b["green"]], imagen[b["nir"]])
+    return _finalizar_indice(
+        valores, "NDWI_AGUA", "Normalized Difference Water Index (McFeeters)", "(GREEN - NIR) / (GREEN + NIR)"
+    )
+
+
+def calcular_ndci(imagen, sensor):
+    """
+    NDCI = (BORDE ROJO - ROJO) / (BORDE ROJO + ROJO)  (clorofila-a en agua, Mishra y Mishra 2012)
+
+    Usa la banda B05 (borde rojo, 705 nm) de Sentinel-2, que Landsat no tiene.
+    Sube con la clorofila (floraciones de fitoplancton) en aguas costeras.
+
+    Args:
+        imagen (xarray.Dataset): Reflectancia con B05 y B04.
+        sensor (str o dict): Solo "sentinel-2".
+
+    Returns:
+        xarray.DataArray: NDCI entre -1 y 1.
+    """
+    b = obtener_configuracion_sensor(sensor)["bandas"]
+    if "red_edge1" not in b:
+        raise ValueError("El NDCI necesita la banda de borde rojo: solo existe en Sentinel-2.")
+    valores = _diferencia_normalizada(imagen[b["red_edge1"]], imagen[b["red"]])
+    return _finalizar_indice(
+        valores, "NDCI", "Normalized Difference Chlorophyll Index", "(RED_EDGE1 - RED) / (RED_EDGE1 + RED)"
+    )
+
+
+_INDICES = {
+    "NDVI": calcular_ndvi,
+    "EVI": calcular_evi,
+    "NDWI": calcular_ndwi,
+    "NDWI_AGUA": calcular_ndwi_agua,
+    "NDCI": calcular_ndci,
+}
 
 
 def calcular_indices(imagen, sensor, indices=("NDVI", "EVI", "NDWI")):
@@ -378,7 +429,7 @@ def calcular_indices(imagen, sensor, indices=("NDVI", "EVI", "NDWI")):
     Args:
         imagen (xarray.Dataset): Reflectancia.
         sensor (str o dict): "landsat" o "sentinel-2".
-        indices (iterable): Cualquiera de "NDVI", "EVI", "NDWI".
+        indices (iterable): Cualquiera de "NDVI", "EVI", "NDWI", "NDWI_AGUA" o "NDCI".
 
     Returns:
         xarray.Dataset: Una variable por índice.
@@ -404,23 +455,46 @@ def lonlat_a_crs(lon, lat, crs_destino):
     return transformador.transform(lon, lat)
 
 
-def extraer_series_puntos(datos, puntos, columna_id="punto_id"):
+def extraer_series_puntos(datos, puntos, columna_id="punto_id", radio=None, estadistico="mediana", crs=None):
     """
-    Extrae la serie temporal de cada punto (píxel más cercano).
+    Extrae la serie temporal de cada punto: el píxel más cercano o un estadístico de una ventana.
+
+    Los puntos pueden venir en coordenadas proyectadas (`x`, `y`, en el CRS de
+    `datos`) o geográficas (`lon`, `lat`, en grados), que se transforman al CRS de
+    `datos`.
 
     Args:
         datos (xarray.Dataset): Variables con dimensiones (time, y, x),
             por ejemplo el resultado de `calcular_indices`.
         puntos (pandas.DataFrame): Una fila por punto, con las columnas `x` e `y`
-            (en el CRS de `datos`) y una columna identificadora única. Las demás
-            columnas (tipo de uso, nombre...) se conservan en el resultado.
+            (en el CRS de `datos`) o `lon` y `lat` (grados), y una columna
+            identificadora única. Las demás columnas (tipo de uso, nombre...) se
+            conservan en el resultado.
         columna_id (str): Nombre de la columna identificadora.
+        radio (float, optional): Radio de la ventana, en unidades del CRS (metros en
+            UTM). Si es None (por defecto) se toma el píxel más cercano al punto. Si
+            se indica, se resume con `estadistico` los píxeles cuyo centro está a
+            `radio` o menos del punto (ignorando NaN, por ejemplo los píxeles
+            enmascarados por nubes). Si ningún píxel cae dentro del radio, se usa el
+            más cercano.
+        estadistico (str): "mediana", "media", "min" o "max" (solo con `radio`).
+        crs (str, optional): CRS de `datos` para transformar `lon` y `lat`. Si es None
+            se lee de `datos.rio.crs`.
 
     Returns:
         pandas.DataFrame: Formato largo, con columnas [columna_id, time, x, y,
-        indice, valor] más las columnas extra de `puntos`.
+        indice, valor] más las columnas extra de `puntos`. Con `radio`, `x` e `y`
+        son las del punto y se agrega `n_validos` (píxeles con dato en la ventana).
     """
     ids = puntos[columna_id].values
+    puntos = puntos.copy()
+    if "x" not in puntos or "y" not in puntos:
+        crs = crs or datos.rio.crs
+        puntos["x"], puntos["y"] = lonlat_a_crs(puntos["lon"].values, puntos["lat"].values, crs)
+
+    if radio is not None:
+        return _extraer_ventanas(datos, puntos, columna_id, radio, estadistico)
+
     seleccion = datos.sel(
         x=xr.DataArray(puntos["x"].values, dims=columna_id, coords={columna_id: ids}),
         y=xr.DataArray(puntos["y"].values, dims=columna_id, coords={columna_id: ids}),
@@ -438,6 +512,38 @@ def extraer_series_puntos(datos, puntos, columna_id="punto_id"):
     )
     extras = puntos.drop(columns=["x", "y"])
     return serie.merge(extras, on=columna_id, how="left")
+
+
+_ESTADISTICOS = {"mediana": "median", "media": "mean", "min": "min", "max": "max"}
+
+
+def _extraer_ventanas(datos, puntos, columna_id, radio, estadistico):
+    """Resume una ventana circular de píxeles alrededor de cada punto (ver `extraer_series_puntos`)."""
+    if estadistico not in _ESTADISTICOS:
+        raise ValueError(f"estadistico debe ser uno de {list(_ESTADISTICOS)}, no {estadistico!r}.")
+    variables = list(datos.data_vars)
+    tablas = []
+    for identificador, x, y in zip(puntos[columna_id], puntos["x"], puntos["y"]):
+        distancia = np.hypot(datos["x"] - x, datos["y"] - y)
+        dentro = distancia <= radio
+        if not bool(dentro.any()):  # radio menor que un píxel: el más cercano
+            dentro = distancia == distancia.min()
+        ventana = datos[variables].where(dentro)
+        if ventana[variables[0]].chunks is not None:  # dask: la mediana necesita la ventana en un solo bloque
+            ventana = ventana.chunk({"y": -1, "x": -1})
+        resumen = getattr(ventana, _ESTADISTICOS[estadistico])(dim=("y", "x"), skipna=True)
+        cuenta = ventana.count(dim=("y", "x"))
+        valores = resumen[variables].to_dataframe().reset_index().melt(
+            id_vars="time", value_vars=variables, var_name="indice", value_name="valor")
+        validos = cuenta[variables].to_dataframe().reset_index().melt(
+            id_vars="time", value_vars=variables, var_name="indice", value_name="n_validos")
+        tabla = valores.merge(validos, on=["time", "indice"])
+        tabla.insert(0, columna_id, identificador)
+        tabla["x"], tabla["y"] = x, y
+        tablas.append(tabla)
+    serie = pd.concat(tablas, ignore_index=True)
+    serie = serie[[columna_id, "time", "x", "y", "indice", "valor", "n_validos"]]
+    return serie.merge(puntos.drop(columns=["x", "y"]), on=columna_id, how="left")
 
 
 def recortar_region(imagen, limites, crs=None):

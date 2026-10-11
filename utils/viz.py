@@ -1,6 +1,7 @@
 """
 Funciones de visualización: composiciones RGB, paneles, histogramas, series
-temporales y mapas interactivos.
+temporales y mapas interactivos (`mapa_bbox`, `mapa_puntos`, `serie_interactiva`).
+`folium` y `hvplot` se importan dentro de cada función: solo hacen falta si las usas.
 
 Las funciones que dibujan tienen el parámetro `mostrar`: con True (por defecto)
 muestran la figura; con False la devuelven, por si quieres guardarla o modificarla.
@@ -415,6 +416,92 @@ def mapa_bbox(bbox, zoom=10, ancho=800, alto=400):
     ).add_to(mapa)
     folium.LayerControl().add_to(mapa)
     return mapa
+
+
+def mapa_puntos(puntos, zoom=None, radio_m=None, ancho=800, alto=500):
+    """
+    Mapa de folium con los puntos de muestreo, un color por `tipo` de punto.
+
+    Incluye mapa base OpenStreetMap e imagen satelital (Esri). Cada punto muestra su
+    nombre al pasar el mouse y sus datos al hacer clic; los tipos son capas que se
+    encienden y apagan en el control de capas.
+
+    Args:
+        puntos (pandas.DataFrame): Resultado de `utils.series.cargar_puntos_csv`
+            (columnas id, nombre, lat, lon y tipo).
+        zoom (int, optional): Zoom inicial. Si es None, el mapa se ajusta para mostrar todos los puntos.
+        radio_m (float, optional): Si se indica, dibuja un círculo con ese radio
+            (la ventana de la que se resume cada serie).
+        ancho, alto (int): Tamaño del mapa en píxeles.
+
+    Returns:
+        folium.Map: Escribe el nombre de la variable al final de la celda para verlo.
+    """
+    import folium
+    from folium.plugins import MousePosition
+
+    mapa = folium.Map(
+        location=[puntos["lat"].mean(), puntos["lon"].mean()],
+        zoom_start=zoom or 10,
+        tiles=None,
+        width=ancho,
+        height=alto,
+    )
+    MousePosition(position="bottomleft").add_to(mapa)
+    folium.TileLayer("OpenStreetMap", name="OpenStreetMap", overlay=False).add_to(mapa)
+    folium.TileLayer(
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+        attr="Esri, Maxar, Earthstar Geographics",
+        name="Imagen satelital (Esri)",
+        overlay=False,
+    ).add_to(mapa)
+    for i, (tipo, grupo) in enumerate(puntos.groupby("tipo", sort=False)):
+        color = COLORES_PUNTOS[i % len(COLORES_PUNTOS)]
+        capa = folium.FeatureGroup(name=f"{tipo} ({len(grupo)})").add_to(mapa)
+        for fila in grupo.itertuples():
+            texto = f"<b>{fila.nombre}</b><br>id: {fila.id}<br>tipo: {fila.tipo}<br>lat {fila.lat:.4f}, lon {fila.lon:.4f}"
+            folium.CircleMarker(
+                [fila.lat, fila.lon], radius=7, color="white", weight=2, fill=True, fill_color=color,
+                fill_opacity=0.95, tooltip=fila.nombre, popup=folium.Popup(texto, max_width=300),
+            ).add_to(capa)
+            if radio_m:
+                folium.Circle([fila.lat, fila.lon], radius=radio_m, color=color, weight=1, fill=False).add_to(capa)
+    folium.LayerControl(collapsed=False).add_to(mapa)
+    if zoom is None and len(puntos) > 1:
+        mapa.fit_bounds([[puntos["lat"].min(), puntos["lon"].min()], [puntos["lat"].max(), puntos["lon"].max()]])
+    return mapa
+
+
+def serie_interactiva(tabla, variable, columna_id="id", fecha="fecha", puntos=None, ancho=900, alto=400, titulo=None):
+    """
+    Gráfico interactivo (hvplot / Bokeh) de una variable: una línea con marcadores por punto.
+
+    Permite acercar, desplazar y ver el valor al pasar el mouse; hacer clic en la
+    leyenda oculta o muestra una serie. Las fechas sin valor (NaN) dejan huecos.
+
+    Args:
+        tabla (pandas.DataFrame): Formato ancho: una fila por punto y fecha, por
+            ejemplo el resultado de `utils.series.cargar_series`.
+        variable (str): Columna a graficar ("ndwi", "ndci", "b04", "ndvi", ...).
+        columna_id (str): Columna que distingue las líneas.
+        fecha (str): Columna de fechas.
+        puntos (list, optional): Solo estos valores de `columna_id`. Por defecto todos.
+        ancho, alto (int): Tamaño en píxeles.
+        titulo (str, optional): Título. Por defecto, la variable.
+
+    Returns:
+        holoviews.Overlay: Escribe el nombre de la variable al final de la celda para verlo.
+    """
+    import hvplot
+    import hvplot.pandas  # noqa: F401  (activa el accesor .hvplot)
+
+    hvplot.extension("bokeh")
+    if puntos is not None:
+        tabla = tabla[tabla[columna_id].isin(puntos)]
+    comunes = dict(x=fecha, y=variable, by=columna_id, width=ancho, height=alto, ylabel=variable, xlabel="Fecha")
+    lineas = tabla.hvplot.line(title=titulo or variable, legend="right", line_width=1.5, **comunes)
+    marcas = tabla.hvplot.scatter(size=25, legend=False, **comunes)
+    return lineas * marcas
 
 
 def _imagen_a_base64(imagen_rgb):

@@ -635,7 +635,7 @@ def parametros_carga(sensor, bandas, resolucion, crs, catalogo=None, bbox=None, 
     parametros = {"bands": nativas, "crs": crs, "resolution": resolucion}
     if bbox is not None:
         parametros["bbox"] = bbox
-    if chunks:
+    if chunks is not None:  # {} es válido: odc.stac lo usa para carga perezosa
         parametros["chunks"] = chunks
     parametros["groupby"] = agrupar_por_dia_y_offset if es_s2 else "solar_day"
     if nombre == "planetary":
