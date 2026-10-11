@@ -206,3 +206,6 @@ Thumbs.db
 credentials.json
 token.pickle
 gdrive_config.json
+
+# Datos preparados de los talleres (se versionan a propósito)
+!talleres/*/datos/*.nc
