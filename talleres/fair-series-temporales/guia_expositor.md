@@ -96,8 +96,8 @@ Las instalaciones de Dataverse chilenas que funcionan son la de la Universidad d
 
 | Pregunta | Respuesta | Qué enseña |
 |---|---|---|
-| Publicaciones de 2026 en Zenodo que mencionan Biobío | 33 (8 artículos y 21 datasets) | "Biobío" da 29 y "Biobio" da 31: las tildes cambian el conteo |
-| Artículos de 2026 de instituciones del Biobío (OpenAlex) | 3.352 | Cuenta por afiliación de los autores, no por tema |
+| Publicaciones de 2026 en Zenodo que mencionan Biobío | 33 (de ellas, 8 artículos de revista); además 21 datasets y 65 registros de todos los tipos | Entre las publicaciones, "Biobío" da 29 y "Biobio" da 31: las tildes cambian el conteo (con `Biobío OR Biobio` salen los 33). Cifras medidas el 10 de octubre de 2026; crecen cada día |
+| Artículos de 2026 de instituciones del Biobío (OpenAlex) | Entre 3.300 y 3.400 (3.373 el 10 de octubre de 2026 con las 10 instituciones que lista OpenAlex para la región) | Cuenta por afiliación de los autores, no por tema. Sube cada semana porque se siguen indexando |
 | Datasets de 2026 en el Dataverse de la UdeC | 2 o 3 | Depende de si se cuenta por fecha de cita o por fecha de publicación |
 | Datasets de temperatura del mar para Chile en Zenodo | 11 en inglés y 2 en español | El mejor tiene licencia CC BY 4.0 |
 
@@ -130,8 +130,10 @@ El ejercicio consiste en conectarse al catálogo de Microsoft Planetary Computer
 
 Dos puntos que se muestran con datos reales:
 
-* **Duplicados por reprocesamiento.** La misma escena puede aparecer dos veces con identificadores de procesamiento distintos. En una prueba, 12 ítems correspondían a solo 6 fechas. Se agrupa por día solar para quedarse con una por fecha.
-* **El desfase de reflectancia depende del catálogo y de la versión de procesamiento.** No existe un valor fijo (el famoso `-0.1` aplica a ciertas versiones y a ciertos catálogos). Los helpers del repositorio lo resuelven por imagen y los participantes lo ven una vez de forma explícita, para entender por qué los cuadernos antiguos con un desfase fijo subestiman los índices.
+* **Duplicados por reprocesamiento.** La misma escena puede aparecer dos veces con identificadores de procesamiento distintos. En el cuaderno se ve con datos reales: entre el 20 de enero y el 10 de febrero de 2022, 16 ítems se reducen a 14 porque la toma del 5 de febrero existe con baseline 04.00 (procesada en 2022) y con 05.10 (reprocesada en 2024); `preparar_items` deja la más nueva. Varios ítems de una misma fecha pero de distinto tile u órbita no son duplicados.
+* **El desfase de reflectancia depende del catálogo y de la versión de procesamiento.** No existe un valor fijo (el famoso `-0.1` aplica a ciertas versiones y a ciertos catálogos). Los helpers del repositorio lo resuelven por imagen y los participantes lo ven una vez de forma explícita: con ventanas reales de la Bahía de Concepción, el DN del agua salta de unas decenas o centenas (baseline 03.00, 23-01-2022) a más de 1.100 (baseline 04.00, 31-01-2022), y un -0.1 fijo daría reflectancias negativas en las fechas antiguas. Así entienden por qué los cuadernos antiguos con un desfase fijo subestiman los índices.
+
+El bloque cierra con un caso de enseñanza: la escena `S2B_MSIL2A_20260407T143739_R096_T18HXD_20260407T180947` declara `EPSG:32718` en el ítem, pero sus archivos no traen CRS y `odc.stac.load` falla con un `AssertionError` sin mensaje. Los participantes la detectan abriendo el encabezado del archivo con `rasterio` (barato) y comparando con el CRS del ítem.
 
 Los cuadernos siguen el patrón nativo del repositorio: conectar el catálogo, buscar con parámetros, preparar los ítems, cargar con `odc.stac.load`, agregar el offset y convertir a reflectancia. Los helpers preparan las llamadas, pero no las esconden.
 
@@ -150,23 +152,32 @@ El ejercicio consiste en cargar una ventana de una escena Sentinel-2 sobre la zo
 * **Reflectancia en el rojo**, como indicador de turbidez.
 * **NDVI**, para la vegetación costera y los humedales.
 
-Finalmente se extrae el valor de un píxel en un punto concreto. Es el primer paso hacia la serie del bloque siguiente.
+Finalmente se extrae el valor de un píxel en un punto concreto. Es el primer paso hacia la serie del bloque siguiente. Dos detalles que conviene anticipar: entre 1 % y 8 % de los píxeles (según la banda) tiene reflectancia levemente negativa en superficies muy oscuras (bosque, sombras) y `convertir_a_reflectancia` los deja en `NaN`, por eso la imagen RGB tiene huecos blancos hasta que se pintan de negro con `fillna(0)`; y la escena usada es la del 10 de agosto de 2026 (0,04 % de nubes), en la que se ve bien la pluma del Biobío.
 
 Este bloque usa solo Sentinel-2. No se incluye Sentinel-3 y tampoco se lo reemplaza por otro sensor (ver la nota técnica sobre Sentinel-3 más abajo).
 
 #### Bloque 4. Construcción de la serie temporal
 
-Cuaderno: `04_series_temporales.py`. Presupuesto: 90 minutos (15 de conceptos, 15 de puntos, 40 de carga y construcción, 10 de comparación de filtros, 10 de guardado). Reserva especial: la carga de 12 meses tarda más de un minuto, así que conviene que todos la lancen a la vez y trabajen mientras tanto en la comparación de filtros.
+Cuaderno: `04_series_temporales.py`. Presupuesto: 90 minutos (15 de conceptos, 15 de puntos, 35 de búsqueda, carga, máscara y construcción de la serie, 10 de comparación de filtros, 15 de guardado, respaldo y gráfico). Reserva especial: en clase se carga un período corto de **tres meses** (junio a agosto de 2026) y la lectura de las ventanas tarda unos dos minutos, así que conviene que todos lancen esa celda a la vez y lean mientras tanto. La serie de 12 meses no se carga en vivo: viene del parquet de respaldo, que además sirve de continuación para el bloque 5.
 
 Se explica cómo pasar de una imagen única a una serie temporal. Los conceptos clave son la revisita del satélite, el filtrado por nubosidad y la extracción de valores en puntos de interés.
 
-QGIS es solo un apoyo. Quien quiera puede crear o revisar los puntos en QGIS y exportarlos a CSV, o mirar una o dos imágenes. Pero el cubo de datos se construye siempre en Colab, y quien no use QGIS parte de un CSV de puntos ya preparado, de tres a cinco ubicaciones en la zona de estudio (por ejemplo agua abierta, bahía, humedal y vegetación costera).
+QGIS es solo un apoyo. El cuaderno lleva un recuadro opcional que explica cómo abrir `puntos_concepcion.geojson`, editar o agregar puntos y exportar a CSV; quien no use QGIS parte del CSV ya preparado (seis puntos: bahía, bahía San Vicente, pluma del Biobío, golfo de Arauco, Laguna Grande y humedal Rocuant-Andalién). El cubo de datos se construye siempre en Colab.
 
-El ejercicio carga los puntos en Colab, busca escenas Sentinel-2 para un período de seis a doce meses y construye la serie por punto. La estrategia es **cargar ventanas pequeñas alrededor de cada punto**, en lugar de la caja completa que los contiene. En una prueba con cinco puntos y doce meses, las ventanas tardaron 78 segundos con 313 MB de memoria, y la carga ansiosa de toda la caja tardó 306 segundos. Esos números se obtuvieron en otra zona, así que conviene volver a medirlos con los puntos del taller.
+El cuaderno hace visible el patrón nativo: una búsqueda para toda la zona (`pystac_client`, con `preparar_items`); la carga de una ventana, escrita con `odc.stac.load` perezoso para ver su tamaño (0,8 MB por punto frente a unos 13 GB que pesaría la caja completa de 36 x 48 km con las mismas bandas y fechas); `cargar_ventanas` para los seis puntos; y luego la máscara SCL, `convertir_a_reflectancia` (con el offset de cada fecha) y los índices a mano para un punto, antes de `construir_series`. Medido con los puntos del taller (tres meses, 81 escenas, 39 fechas por punto, 5 MB en total): la búsqueda y el armado de los cubos tardan unos 6 s, la lectura de las ventanas unos 105 s y todo el cuaderno unos 2 minutos. La prueba anterior (otra zona, 12 meses, 78 s y 313 MB frente a 306 s de la caja completa) no se repite aquí: la caja completa no se lee, solo se calcula su tamaño.
 
-**Filtro de nubes de la escena frente a máscara SCL.** Son dos cosas distintas. El filtro de la escena (`eo:cloud_cover`) descarta fechas completas, pero no dice nada sobre un punto en particular. La máscara de clasificación de escena (SCL) trabaja por píxel. En la prueba, con escenas de menos de 20% de nubes la máscara no cambió nada, y sin filtro de escena (hasta 100%) enmascaró cerca de 40% de los valores en los puntos. Los participantes repiten la comparación con sus puntos. Conviene mencionar que la lista de clases SCL excluidas por defecto está pensada para vegetación y que cerca del agua conviene revisar qué clases se están descartando.
+**Filtro de nubes de la escena frente a máscara SCL.** Son dos cosas distintas. El filtro de la escena (`eo:cloud_cover`) descarta fechas completas, pero no dice nada sobre un punto en particular. La máscara de clasificación de escena (SCL) trabaja por píxel. Se carga una sola vez con hasta 100 % de nubes y se simulan cuatro límites, con y sin máscara (`construir_series(..., excluir=[])` es "sin máscara"). Resultado medido (junio a agosto de 2026, suma de los seis puntos; 234 fechas con cobertura con límite 100 %):
 
-Para terminar, la serie se guarda en un archivo parquet con sus metadatos. Es el momento FAIR del día: el archivo viaja a los bloques siguientes y también sirve de respaldo (hay un parquet de reserva en el repositorio por si la carga en vivo falla).
+| Límite de nubes de escena | Fechas | Válidas sin máscara SCL | Válidas con máscara SCL | De las "válidas sin máscara", contaminadas |
+|---|---|---|---|---|
+| 100 % | 234 | 227 | 51 | 176 |
+| 60 % | 73 | 71 | 49 | 22 |
+| 30 % | 47 | 45 | 41 | 4 |
+| 10 % | 24 | 22 | 22 | 0 |
+
+(Fechas contaminadas: parecen válidas sin máscara, pero más de la mitad de su ventana está tapada según SCL.) La máscara quita en promedio 77 % de los píxeles con límite 100 %, 30 % con 60 %, 9 % con 30 % y 0 % con 10 %. Es invierno, la época más nublada; en verano la diferencia se achica. Estos números reemplazan a los de la prueba anterior (Maipo: con menos de 20 % de nubes la máscara no cambiaba nada; sin filtro enmascaraba cerca de 40 %). Conviene mencionar que la lista de clases SCL excluidas por defecto está pensada para vegetación y que cerca del agua conviene revisar qué clases se están descartando: el cuaderno muestra la distribución de clases por punto (en las ventanas de agua casi todo es agua o nube; el humedal tiene además suelo desnudo y sombras de nube).
+
+Para terminar, la serie se guarda en un archivo parquet con sus metadatos (`guardar_series`). Es el momento FAIR del día: el archivo viaja a los bloques siguientes. Después se carga el parquet de respaldo de 12 meses y se comprueba que las fechas en común coinciden exactamente con la serie recién construida (diferencia máxima 0). Hay tres filas de más en el respaldo, todas del golfo de Arauco: ese punto cae donde se traslapan dos escenas, y el respaldo se buscó con filtro de escena de 60 %, así que entró solo la escena despejada de cada par; es un buen ejemplo de que el filtro de escena depende de dónde cae el punto. El bloque termina con las cuatro variables (NDWI, NDCI, B04 y NDVI) por punto.
 
 Entregable del día: un cuaderno con la serie temporal de Sentinel-2 para los puntos definidos, guardada en parquet.
 
@@ -176,25 +187,27 @@ Entregable del día: un cuaderno con la serie temporal de Sentinel-2 para los pu
 
 #### Bloque 5. Análisis exploratorio de la serie temporal
 
-Cuaderno: `05_exploracion_series.py`. Presupuesto: 85 minutos (10 de carga del parquet, 25 de estadísticas y suavizado, 20 de tendencia, 30 de climatología y anomalías).
+Cuaderno: `05_exploracion_series.py`. Presupuesto: 85 minutos (10 de carga del parquet, 25 de estadísticas y suavizado, 15 de tendencia, 10 de patrones estacionales, 25 de anomalías, OISST e interpretación).
 
-El bloque parte del parquet guardado el día anterior, sin recalcular nada. Se revisan estadísticas descriptivas básicas (media, mediana, percentiles) y técnicas de suavizado como la media móvil. Se introduce el concepto de anomalía: un valor que se aleja significativamente del comportamiento esperado para esa época del año.
+El bloque parte del parquet de 12 meses, sin recalcular nada. Se revisan estadísticos descriptivos (media, mediana, percentiles) y la media móvil con `rolling_media`, con ventana en días (`"30D"`) porque las fechas son irregulares. Se calcula la tendencia lineal (`tendencia_lineal`) con una advertencia explícita: con un solo año la pendiente mezcla estación y cambio, y el cuaderno lo muestra ajustando la recta a todo el año y a dos tramos de seis meses (la pendiente de NDWI en la pluma del Biobío cambia de signo).
 
-El ejercicio consiste en aplicar una media móvil de tres puntos, graficar la serie original, la suavizada y una línea de tendencia calculada con regresión lineal, calcular la **climatología mensual** y las **anomalías** como puntuación z respecto de esa climatología, e interpretar los patrones estacionales. Con esto la serie de Sentinel-2 queda conectada con la idea que se usa en el bloque 7.
+**Anomalías.** Con un año de datos no hay climatología mensual que valga: cada mes tiene entre 2 y 11 observaciones y el valor extremo forma parte de su propia referencia (un z con *n* valores no puede pasar de (*n* - 1) / raíz de *n*). Por eso el cuaderno usa `anomalias_zscore(referencia="total")`, y muestra que con `"mes"` el golfo de Arauco llega a z = 2,5 donde con `"total"` llega a 8,6. La climatología mensual y las anomalías bien hechas se muestran con la serie OISST del punto (`cargar_oisst("punto")`, base 1991-2020, 848 a 930 observaciones por mes), como puente al bloque 7: en agosto y septiembre de 2026 la anomalía mensual media es de +1,7 y +2,4 (el vacío de 2024-2026 se ve como barras ausentes).
+
+Cierra con tres lecturas guiadas: turbidez de la pluma del Biobío (B04 alta en noviembre-diciembre y agosto-septiembre; sin datos de lluvia o caudal es solo una hipótesis), clorofila en las bahías (NDCI cerca de cero en primavera y verano; en invierno hay pocas fechas y agua muy oscura, el índice es ruidoso) y NDVI del humedal (rango corto, 0,5 a 0,6). Se insiste en que son hipótesis y en qué dato faltaría.
 
 #### Bloque 6. Visualización interactiva e interpretación
 
-Cuaderno: `06_visualizacion_interactiva.py`. Presupuesto: 50 minutos (15 de buenas prácticas, 20 de `hvplot`, 15 de `folium`).
+Cuaderno: `06_visualizacion_interactiva.py`. Presupuesto: 50 minutos (15 de buenas prácticas, 20 de `hvplot`, 10 de `folium`, 5 de interpretación).
 
-Se presentan buenas prácticas para gráficos de series temporales ambientales. Se introducen `hvplot` para gráficos interactivos y `folium` para mapas.
+Se presentan buenas prácticas para gráficos de series temporales ambientales con un ejemplo mejorable y su versión corregida sobre los mismos datos. Se introducen `hvplot` (primero `serie_interactiva`, después la llamada `tabla.hvplot.line(...)` con cada parámetro a la vista, la composición con `*`, `subplots` y `groupby`, y el guardado como HTML independiente) y `folium` (`mapa_puntos` y luego un mapa armado a mano cuyos popups resumen cada serie con una tabla y un gráfico pequeño incrustado).
 
-El ejercicio consiste en crear un gráfico interactivo de la serie con `hvplot` y añadir un mapa con la ubicación de los puntos de muestreo usando `folium`. Se interpreta la serie en el contexto del fenómeno estudiado. Los widgets de `hvplot` (selectores y deslizadores) pueden comportarse distinto en Colab que en un entorno local, por lo que se prueban el día anterior (ver las notas técnicas).
+`hvplot` no viene en Colab: el cuaderno lo instala con una celda que lee `requirements.txt` (puede tardar un minuto; conviene que todos la lancen al empezar). Los widgets de `hvplot` (el menú de `groupby`, por ejemplo) pueden comportarse distinto en Colab que en un entorno local, por lo que se prueban el día anterior (ver las notas técnicas). El cuaderno termina con un ejercicio de interpretación por escrito, con pistas plegadas, que sirve de base para las presentaciones del día 3.
 
 ### 14:30 a 17:30
 
 #### Bloque 7. Detección de eventos extremos: umbrales clásicos y aprendizaje automático
 
-Cuaderno: `07_eventos_extremos.py`. Presupuesto: 100 minutos (15 de método, 30 de Hobday, 15 de validación, 15 de Isolation Forest, 15 de mapa de frecuencia, 10 de discusión del vacío de datos).
+Cuaderno: `07_eventos_extremos.py`. Presupuesto: 100 minutos (15 de datos y búsqueda del vacío, 30 de Hobday paso a paso, 15 de resultados y debate del vacío, 10 de validación con `xmhw`, 15 de Isolation Forest, 15 de mapa de frecuencia). El cuaderno tarda unos 85 segundos en ejecutarse completo; el mapa de frecuencia es la parte más lenta (cerca de 50 segundos).
 
 Este bloque introduce la detección de eventos extremos en series temporales ambientales. Se llama "umbrales clásicos y aprendizaje automático" porque el método de Hobday es estadístico y no de IA, y porque se compara con un método de aprendizaje automático. La IA queda reservada para el bloque 1.
 
@@ -215,7 +228,7 @@ Este bloque introduce la detección de eventos extremos en series temporales amb
 
 **Mapa de frecuencia.** Con la malla de 34 a 40 S y 71 a 76 O se calcula la frecuencia de eventos por píxel y se muestra en un mapa.
 
-**Resultados de referencia.** En una corrida anterior, con el vacío rellenado desde AWS, el píxel frente a Concepción dio 103 olas de calor y 136 olas de frío. Los eventos más notables fueron 1997 (66 días), 1998 (57 días), el El Niño costero de 2017 (48 días) y 1982 (hay que recalcularlo). Con el vacío sin rellenar, los números pueden variar, así que conviene correr el cuaderno completo antes del taller y anotar los valores definitivos.
+**Resultados de referencia.** Con los datos de Planetary Computer solamente (sin rellenar el vacío) y la línea de base 1991-2020, el píxel frente a Concepción da **88 olas de calor y 111 de frío**, coincidentes con `xmhw` (salvo el primer día de la serie y dos categorías, por una definición distinta del día del pico). Los eventos de calor más largos son 1997 (63 días), 1998 (52 días), el El Niño costero de 2017 (44 días) y 1982 (37 y 35 días). Hay una ola de calor en curso desde 2026-08-17 (39 días al 2026-09-24, categoría II). La ola de frío más larga es la de 2007 (96 días). Isolation Forest (contaminación 0,1) no marca ninguno de los días del evento de 2026, porque una anomalía de +1,3 °C no es rara en toda la serie. Un detalle para el debate del vacío: interpolar linealmente da 90 olas de calor, dos de ellas inventadas dentro del vacío (una de 163 días, categoría III). Si los datos de Planetary Computer se actualizan, estas cifras cambian: corre el cuaderno completo antes del taller y anota los valores definitivos.
 
 #### Bloque 8. Git, reproducibilidad y cierre del flujo de trabajo
 
@@ -225,11 +238,11 @@ Este bloque final integra todo lo aprendido en un solo repositorio versionado co
 
 Se explican los comandos esenciales de Git (`init`, `add`, `commit`, `push`, `pull`, `branch`) y su integración con Google Colab. La trazabilidad es el concepto central: cada cambio queda registrado y se puede revertir o auditar.
 
-**Autenticación.** El token se crea como *fine-grained PAT*, limitado a un solo repositorio, con permiso de contenido de lectura y escritura y una expiración corta. Se guarda en Colab Secrets y se lee con `google.colab.userdata`. Nunca se escribe dentro de una celda, no se imprime y no queda en las salidas ni en `.git/config`: se usa un credential helper o una URL de un solo uso que no se persiste. Dedica los primeros diez minutos del bloque a verificar que todos pueden hacer `git push`.
+**Autenticación.** El token se crea como *fine-grained PAT*, limitado a un solo repositorio, con permiso de contenido de lectura y escritura y una expiración corta. Se guarda en Colab Secrets y se lee con `google.colab.userdata`. Nunca se escribe dentro de una celda, no se imprime y no queda en las salidas ni en `.git/config`: el cuaderno usa `GIT_ASKPASS` con un script que no contiene el token y que lo lee de una variable de entorno válida solo para el proceso del `push` (más `credential.helper=` vacío), con la URL del remoto limpia, y después comprueba `.git/config`. Muestra antes, con un valor falso, qué pasa si el token va en la URL. Dedica los primeros diez minutos del bloque a verificar que todos pueden hacer `git push`.
 
 **Plan de respaldo.** Quien no logre que el token funcione en esos diez minutos usa la opción de Colab "Guardar una copia en GitHub", que no requiere token, y sigue con el resto del bloque.
 
-El ejercicio consiste en refactorizar el código de los cuadernos anteriores en funciones reutilizables, inicializar un repositorio local desde Colab, hacer al menos tres commits descriptivos y subir el repositorio a GitHub. Se verifica que el cuaderno se ejecuta de principio a fin sin errores.
+El ejercicio consiste en refactorizar el código de los cuadernos anteriores en funciones reutilizables, inicializar un repositorio local desde Colab, hacer al menos tres commits descriptivos y subir el repositorio a GitHub. Se verifica que el cuaderno se ejecuta de principio a fin sin errores: el cuaderno clona el repositorio de práctica en una carpeta limpia, ejecuta el análisis ahí y compara las huellas (hash) de los resultados. Las partes locales (commits, ramas, push y pull contra un remoto local) funcionan sin token y sin internet; solo la subida a GitHub necesita el Secreto `GITHUB_TOKEN`.
 
 Entregable del día: un repositorio en GitHub con el cuaderno completo, commits documentados, la serie temporal con sus anomalías y los eventos extremos detectados.
 
@@ -243,7 +256,7 @@ Cuaderno: `09_publicacion_zenodo.py`. Presupuesto: 10 minutos de repaso y pulido
 
 Cada participante presenta su repositorio y los hallazgos principales en **6 minutos**. Con hasta 10 personas son 60 minutos más los cambios, por lo que cabe en 65. Con más personas habría que bajar a 5 minutos. Se discuten las dificultades encontradas, las decisiones tomadas y lo aprendido sobre el fenómeno ambiental analizado. El instructor y los compañeros aportan retroalimentación.
 
-Luego se explica cómo publicar un cuaderno y los datos derivados de forma FAIR. La práctica se hace en **Zenodo Sandbox** (sandbox.zenodo.org), no en Zenodo real: un depósito real crea un DOI público y permanente para material de práctica. En el sandbox los DOI tienen el prefijo 10.5072 y no se resuelven fuera de él. El depósito se hace por la API REST con el token de Zenodo Sandbox de cada participante, guardado en Colab Secrets. Se completan los metadatos mínimos: título, descripción, palabras clave, licencia y autores con ORCID. Si el expositor quiere mostrar un depósito real, lo hace él, como demostración y con su propia cuenta.
+Luego se explica cómo publicar un cuaderno y los datos derivados de forma FAIR. La práctica se hace en **Zenodo Sandbox** (sandbox.zenodo.org), no en Zenodo real: un depósito real crea un DOI público y permanente para material de práctica. En el sandbox los DOI tienen el prefijo 10.5072 y no se resuelven fuera de él. El depósito se hace por la API REST con el token de Zenodo Sandbox de cada participante, guardado en Colab Secrets. Se completan los metadatos mínimos: título, descripción, palabras clave en español e inglés (con y sin tilde), licencia, autores con ORCID, lugar e identificadores relacionados con la fuente. El cuaderno valida los metadatos antes de enviarlos y repite las preguntas del bloque 1 sobre el registro. El paso de publicar está protegido por un interruptor (`CONFIRMO_PUBLICAR`). La recuperación por DOI usa el resolvedor del propio sandbox y la búsqueda de su API, y compara la suma de verificación md5 de lo descargado. Si el expositor quiere mostrar un depósito real, lo hace él, como demostración y con su propia cuenta.
 
 El ejercicio consiste en subir el cuaderno y los datos derivados al sandbox, completar los metadatos y verificar que el depósito es recuperable por su DOI.
 
