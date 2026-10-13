@@ -142,7 +142,8 @@ print(catalogo.title)
 # Un catálogo tiene muchas **colecciones**. Veamos cuántas y cómo se describe la de Sentinel-2 nivel 2A (reflectancia de superficie).
 
 # %%
-colecciones = list(catalogo.get_collections())
+# Para listar usamos un cliente sin firma: firmar cada colección falla (403) en algunas de ellas.
+colecciones = list(Client.open("https://planetarycomputer.microsoft.com/api/stac/v1").get_collections())
 print(f"Planetary Computer tiene {len(colecciones)} colecciones. Algunas:")
 for coleccion in colecciones[:8]:
     print(f"  {coleccion.id:<35} {coleccion.title}")
