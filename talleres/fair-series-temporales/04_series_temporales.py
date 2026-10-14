@@ -43,6 +43,7 @@ if "google.colab" in sys.modules:  # Colab: clonar el repositorio (y actualizarl
 else:  # Local: subir desde la carpeta actual hasta encontrar utils/
     RAIZ = next(p for p in [Path.cwd(), *Path.cwd().parents] if (p / "utils").is_dir())
 sys.path.insert(0, str(RAIZ))
+DATOS = RAIZ / "talleres" / "fair-series-temporales" / "datos"  # carpeta con los archivos de datos del taller
 
 # %%
 # @title Instalar los paquetes de este bloque (solo si faltan)
@@ -71,15 +72,18 @@ import matplotlib.pyplot as plt
 import numpy as np
 import odc.stac
 import pandas as pd
+import planetary_computer
 import plotly.express as px
+import pyarrow.parquet as pq
+import pystac_client
+import xarray as xr
 from matplotlib.colors import ListedColormap
+from shapely.geometry import box, shape
 
 # Funciones de apoyo del curso (carpeta utils/)
-from utils.raster import calcular_indices, mascara_calidad_sentinel2, nombres_bandas
-from utils.series import (BANDAS_SERIES, agregar_nubes_escena, bbox_punto, bbox_puntos, cargar_puntos_csv, cargar_series, cargar_ventanas,
-                          construir_series, crs_utm, guardar_series, items_de_punto, leer_metadatos_series,
-                          resumen_validez)
-from utils.stac import conectar_catalogo, parametros_busqueda, parametros_carga, preparar_items, resumir_imagenes
+from utils.series import (agregar_nubes_escena, bbox_punto, bbox_puntos, cargar_puntos_csv, cargar_ventanas,
+                          construir_series, crs_utm, guardar_series, resumen_validez)
+from utils.stac import parametros_busqueda, parametros_carga, preparar_items, resumir_imagenes
 from utils.viz import mapa_puntos
 
 warnings.filterwarnings("ignore", category=UserWarning)  # avisos de GDAL por escenas sin georreferencia
@@ -185,7 +189,8 @@ RADIO_M = 150  # ventana de unos 300 x 300 m alrededor de cada punto
 bbox = bbox_puntos(puntos, RADIO_M)
 print("bbox de la zona (oeste, sur, este, norte):", [round(c, 3) for c in bbox])
 
-catalogo = conectar_catalogo()  # pystac_client.Client (Planetary Computer, con firma automática)
+# Catálogo STAC de Planetary Computer; `sign_inplace` firma los enlaces de descarga de cada imagen
+catalogo = pystac_client.Client.open("https://planetarycomputer.microsoft.com/api/stac/v1", modifier=planetary_computer.sign_inplace)
 parametros = parametros_busqueda("sentinel-2", bbox, FECHAS, nubes_max=100, catalogo=catalogo)
 busqueda = catalogo.search(**parametros)  # llamada nativa de pystac_client
 items = busqueda.item_collection()
@@ -215,8 +220,10 @@ print(pd.Series({f"nubes <= {limite} %": int((nubes <= limite).sum()) for limite
 # %%
 punto = puntos.loc[puntos["id"] == "bahia_concepcion"].iloc[0]
 bbox_p = bbox_punto(punto["lon"], punto["lat"], RADIO_M)  # ventana de unos 300 x 300 m
-items_p = items_de_punto(items, bbox_p)  # solo las escenas que tocan la ventana
-bandas = nombres_bandas("sentinel-2", BANDAS_SERIES, con_calidad=True)  # verde, rojo, borde rojo, NIR y SCL
+# Solo las escenas cuya huella toca la ventana (una escena puede cubrir unos puntos y otros no)
+ventana_p = box(*bbox_p)
+items_p = [item for item in items if shape(item.geometry).intersects(ventana_p)]
+bandas = ["B03", "B04", "B05", "B08", "SCL"]  # verde, rojo, borde rojo, NIR y la banda de clasificación (SCL)
 print("Bandas:", bandas)
 
 parametros_ds = parametros_carga("sentinel-2", bandas, resolucion=10, crs=crs_utm(punto["lon"], punto["lat"]),
@@ -242,7 +249,7 @@ print(f"Caja completa ({ancho_m / 1000:.0f} x {alto_m / 1000:.0f} km): unos {gb_
 print(f"Seis ventanas de 300 x 300 m: unos {mb_ventanas:.0f} MB")
 
 # %% [markdown]
-# Por eso cargamos ventanas. `cargar_ventanas` repite para **cada** punto exactamente los pasos que acabas de ver (`bbox_punto`, `items_de_punto`, `parametros_carga`, `odc.stac.load`, `agregar_offset`, `agregar_nubes_escena`; usa la versión de `utils`, que hace lo mismo que la tuya) y al final lee todos los píxeles de una vez, en paralelo. Lanza la celda y espera un par de minutos: es la lectura de red de las seis ventanas.
+# Por eso cargamos ventanas. `cargar_ventanas` repite para **cada** punto exactamente los pasos que acabas de ver (`bbox_punto`, el filtro de escenas con `shape(...).intersects`, `parametros_carga`, `odc.stac.load`, `agregar_offset`, `agregar_nubes_escena`; usa la versión de `utils`, que hace lo mismo que la tuya) y al final lee todos los píxeles de una vez, en paralelo. Lanza la celda y espera un par de minutos: es la lectura de red de las seis ventanas.
 #
 # > En una prueba anterior (otra zona) las ventanas tardaron 78 s con 313 MB y la caja completa 306 s. Con los puntos de este taller, la lectura de tres meses la medimos más abajo en esta misma celda.
 
@@ -265,7 +272,7 @@ print(ventana[["offset_reflectancia", "nubes_escena"]].to_dataframe().head(5).to
 #
 # Antes de usar `construir_series`, hacemos a mano los tres pasos para un punto.
 #
-# **Paso 1: la máscara SCL.** La banda SCL (*Scene Classification Layer*) asigna a cada píxel una clase. Estas son las que importan:
+# **Paso 1: la máscara SCL.** La banda SCL (*Scene Classification Layer*) asigna a cada píxel una clase (un número entero). La máscara es una pregunta por píxel: ¿su clase está en la lista de clases que descartamos? Con `isin` obtienes un valor `True` donde la respuesta es sí, y con `~` (negación) lo inviertes para quedarte con los píxeles válidos. Estas son las clases que importan (la última columna marca las que descartamos, las mismas que `construir_series` descarta por defecto):
 #
 # | Código | Clase | ¿Se descarta por defecto? |
 # |---|---|---|
@@ -301,7 +308,8 @@ distribucion.loc[distribucion.sum(axis=1) > 0]
 # Veamos las ventanas de tres fechas del punto de la bahía, de la más despejada a la más nublada **en la ventana**, con las nubes de **la escena** en el título. Fíjate que las dos cifras no siempre cuentan lo mismo.
 
 # %%
-valida = mascara_calidad_sentinel2(ventana["SCL"])  # True donde el píxel es válido
+excluir = [0, 1, 3, 8, 9, 10]  # sin datos, saturado, sombra de nube, nube media, nube alta y cirrus (tabla de arriba)
+valida = ~ventana["SCL"].isin(excluir)  # True donde el píxel es válido
 fraccion_valida = valida.mean(["x", "y"]).to_series()
 orden = fraccion_valida.sort_values(ascending=False)
 elegidas = [orden.index[0], orden.index[len(orden) // 2], orden.index[-1]]
@@ -322,14 +330,18 @@ plt.show()
 # %% [markdown]
 # **Paso 2: aplicar la máscara y convertir a reflectancia.** Los píxeles inválidos pasan a NaN. Luego `reflectancia_sentinel2` aplica `DN * 0.0001 + offset`, con el offset de **cada fecha** (la coordenada `offset_reflectancia`). Por eso se convierte **antes** de combinar fechas.
 #
-# **Paso 3: los índices.** Con la reflectancia calculamos NDWI de McFeeters (agua), NDCI (clorofila), la reflectancia roja B04 (turbidez) y NDVI (vegetación).
+# **Paso 3: los índices.** Con la reflectancia calculamos, con aritmética de bandas (cada banda es un `DataArray` y se opera directamente): NDWI de McFeeters (agua, `(B03 - B08) / (B03 + B08)`), NDCI (clorofila, `(B05 - B04) / (B05 + B04)`), NDVI (vegetación, `(B08 - B04) / (B08 + B04)`) y la reflectancia roja B04 (turbidez), que se usa tal cual. Una reflectancia válida es mayor o igual que 0, así que cada índice queda entre -1 y 1; si en un píxel ambas bandas valen 0 la división es 0 / 0 y el resultado es NaN.
 
 # %%
 espectrales = ventana[["B03", "B04", "B05", "B08"]]
 enmascarada = espectrales.where(valida)  # píxeles con nube, sombra, cirrus o sin dato -> NaN
 refl = reflectancia_sentinel2(enmascarada)  # DN * 0.0001 + offset de cada fecha
-indices = calcular_indices(refl, "sentinel-2", ["NDWI_AGUA", "NDCI", "NDVI"])
-indices["B04"] = refl["B04"]
+indices = xr.Dataset({
+    "NDWI_AGUA": (refl["B03"] - refl["B08"]) / (refl["B03"] + refl["B08"]),  # verde y NIR
+    "NDCI": (refl["B05"] - refl["B04"]) / (refl["B05"] + refl["B04"]),  # borde rojo y rojo
+    "NDVI": (refl["B08"] - refl["B04"]) / (refl["B08"] + refl["B04"]),  # NIR y rojo
+    "B04": refl["B04"],  # reflectancia roja
+})
 print("Variables:", list(indices.data_vars))
 print(f"Reflectancia roja de la ventana, fecha más despejada: mediana {float(refl['B04'].sel(time=elegidas[0]).median()):.4f}")
 
@@ -464,8 +476,9 @@ print(f"Guardado: {archivo} ({archivo.stat().st_size / 1024:.0f} kB)")
 # Para comprobar que el archivo se entiende sin este cuaderno, léelo de vuelta junto con sus metadatos:
 
 # %%
-recuperada = cargar_series(archivo)
-leidos = leer_metadatos_series(archivo)
+recuperada = pd.read_parquet(archivo)
+# Los metadatos viajan dentro del archivo, como bytes (la clave "pandas" es de pandas y no nos interesa)
+leidos = {k.decode(): v.decode() for k, v in pq.read_schema(archivo).metadata.items() if k != b"pandas"}
 print(recuperada.dtypes.to_string())
 print("\nMetadatos dentro del archivo:", ", ".join(leidos))
 print("Título:", leidos["titulo"])
@@ -481,7 +494,7 @@ print("Título:", leidos["titulo"])
 # Antes de usarla, una prueba de **reproducibilidad**: las fechas que ambos tienen en común (junio a agosto de 2026, hasta 60 % de nubes de escena) deberían tener exactamente los mismos valores.
 
 # %%
-respaldo = cargar_series("series_sentinel2_concepcion.parquet")
+respaldo = pd.read_parquet(DATOS / "series_sentinel2_concepcion.parquet")
 print(f"Respaldo: {len(respaldo)} filas, {respaldo['fecha'].min():%Y-%m-%d} a {respaldo['fecha'].max():%Y-%m-%d}")
 
 variables = ["ndwi", "ndci", "b04", "ndvi", "pixeles_validos"]
