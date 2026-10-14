@@ -252,15 +252,23 @@ plt.show()
 # ### La huella de cada imagen
 #
 # Cada ítem trae su **huella** (`geometry`): el polígono que cubre. Dibujamos las de los dos tiles junto con los puntos de muestreo. Fíjate en que los tiles se **traslapan** y en que un punto puede quedar cubierto por un tile y no por el otro.
+#
+# Cada huella mide unos 110 km de lado y los puntos caben en una zona mucho más pequeña, así que el mapa se aleja para mostrar los dos polígonos completos. Usa la rueda del mouse (o los botones `+` y `-`) para acercarte a los puntos.
 
 # %%
-mapa = mapa_puntos(puntos, radio_m=150)
+huellas, limites = [], []  # capas de folium y bbox [oeste, sur, este, norte] de cada huella
 for tile, color in {"18HXE": "#3388ff", "18HXD": "#ff8833"}.items():
     ejemplo = next(i for i in items if i.properties["s2:mgrs_tile"] == tile)
-    folium.GeoJson(ejemplo.geometry, name=f"huella {tile}",
-                   style_function=lambda _, color=color: {"color": color, "weight": 2, "fillOpacity": 0.05},
-                   tooltip=f"tile {tile}").add_to(mapa)
+    huellas.append(folium.GeoJson(ejemplo.geometry, name=f"huella {tile}",
+                                  style_function=lambda _, color=color: {"color": color, "weight": 3, "fillColor": color, "fillOpacity": 0.1},
+                                  tooltip=f"tile {tile}"))
+    limites.append(ejemplo.bbox)
+# Las capas con nombre van en `capas=`: si se agregan después con .add_to(mapa), el control de capas ya está armado y el mapa falla
+mapa = mapa_puntos(puntos, radio_m=150, capas=huellas)
 folium.Rectangle(bounds=[[bbox[1], bbox[0]], [bbox[3], bbox[2]]], color="red", fill=False, weight=2).add_to(mapa)
+# mapa_puntos encuadra solo los puntos: aquí encuadramos también las huellas
+mapa.fit_bounds([[min(b[1] for b in limites), min(b[0] for b in limites)],
+                 [max(b[3] for b in limites), max(b[2] for b in limites)]])
 mapa
 
 # %% [markdown]
