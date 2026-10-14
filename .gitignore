@@ -209,3 +209,6 @@ gdrive_config.json
 
 # Datos preparados de los talleres (se versionan a propósito)
 !talleres/*/datos/*.nc
+
+# Material privado del expositor (no se publica)
+talleres/*/guia_expositor.md

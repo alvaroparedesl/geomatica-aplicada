@@ -51,7 +51,7 @@ Todos los cuadernos empiezan con la celda **Preparar entorno**, que clona este r
 | 2 | 14:30 a 17:30 | 8. Git, reproducibilidad y cierre del flujo | `08` |
 | 3 | 10:00 a 12:30 | 9. Presentaciones y publicación FAIR | `09` |
 
-Los bloques de una misma sesión se siguen uno tras otro, con una pausa entre ellos. La distribución de minutos está en la guía del expositor.
+Los bloques de una misma sesión se siguen uno tras otro, con una pausa entre ellos.
 
 ## Zona de estudio
 

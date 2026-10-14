@@ -46,10 +46,23 @@ Notebooks live in `notebooks/` (and later `talleres/`), shared helpers in
 
 Sentinel-2 L2A reflectance has a radiometric offset (-1000 DN, or -0.1) that
 depends on the catalog AND the processing baseline of each scene. NEVER
-apply a fixed offset by hand. Always go through the helpers in `utils/`
-(`utils/stac.py`, `utils/raster.py`) and keep their tests
-(`utils/tests/test_offset_sentinel2.py` and related) passing and extended
-when behavior changes.
+apply a fixed offset by hand: it is decided per image from its processing
+baseline (`s2:processing_baseline`), never as one constant for a whole series.
+
+- `utils/` (`utils/stac.py`, `utils/raster.py`) holds the tested reference:
+  `offset_sentinel2`, `agregar_offset`, `renombrar_bandas`,
+  `convertir_a_reflectancia`. The course notebooks in `notebooks/` and the
+  internals of `utils/series.py` use them. Keep their tests
+  (`utils/tests/test_offset_sentinel2.py` and related) passing and extended
+  when behavior changes.
+- In `talleres/fair-series-temporales/` (notebooks 02 to 04) students see the
+  code: notebook 03 applies the offset by hand (`offset = -0.1 if baseline >=
+  4.0 else 0.0`, then `DN * 0.0001 + offset`) and notebook 04 defines simple
+  `agregar_offset` and `reflectancia_sentinel2` functions at the top. They are
+  Planetary Computer only and have no error handling on purpose.
+- `utils/tests/test_cuadernos_taller.py` extracts that notebook code and checks
+  it gives the same result as the `utils` reference. If you change the rule in
+  one place, change the other and keep that test passing.
 
 ## STAC catalogs
 
