@@ -95,6 +95,7 @@ else:
 # 2. Pulsa **Crear clave de API** (si te pide un proyecto, crea uno nuevo) y copia la clave.
 # 3. En Colab abre el panel izquierdo, pulsa el icono de la llave (**Secrets**), agrega un secreto llamado exactamente `GOOGLE_API_KEY`, pega la clave como valor y activa **Acceso desde el cuaderno**.
 # 4. Vuelve a esta celda y ejecútala: te dirá si la encontró.
+# 5. Si trabajas fuera de Colab, escribe la clave en un archivo `.env` junto al cuaderno (una línea: `GOOGLE_API_KEY=tu_clave`; el archivo no se sube a GitHub) o expórtala como variable de entorno antes de abrir Jupyter.
 #
 # **Antes de empezar, ten en cuenta**
 #
@@ -109,12 +110,13 @@ import os
 
 
 def clave_gemini():
-    """La clave GOOGLE_API_KEY de los Secrets de Colab (o, fuera de Colab, del entorno); None si no existe."""
+    """La clave GOOGLE_API_KEY de los Secrets de Colab (o, fuera de Colab, del entorno o de un archivo .env); None si no existe."""
     try:
         from google.colab import userdata
         return userdata.get("GOOGLE_API_KEY") or None
     except Exception:  # no estamos en Colab, el secreto no existe o no tiene acceso desde el cuaderno
-        return os.environ.get("GOOGLE_API_KEY") or None
+        from utils.ia import _clave_gemini
+        return _clave_gemini()
 
 
 def hay_clave_gemini():
@@ -539,9 +541,7 @@ def preguntar_al_registro(registro):
         print("Esta celda necesita tu clave de Gemini (secreto GOOGLE_API_KEY) y no la encontré. "
               "Sigue la demostración del expositor.")
         return
-    from google import genai
-
-    from utils.ia import MODELO_POR_DEFECTO
+    from utils.ia import explicar_error_gemini, generar_texto, mensaje_de_error
 
     instruccion = (
         "Eres un asistente que responde SOLO con los metadatos del registro siguiente. Si un dato no aparece en ellos, "
@@ -550,10 +550,9 @@ def preguntar_al_registro(registro):
         + "\n".join(f"{i}. {p}" for i, p in enumerate(PREGUNTAS, start=1))
     )
     try:
-        cliente = genai.Client(api_key=clave_gemini())
-        print(cliente.models.generate_content(model=MODELO_POR_DEFECTO, contents=instruccion).text)
+        print(generar_texto(instruccion))
     except Exception as error:  # noqa: BLE001
-        print(f"Gemini no respondió ({type(error).__name__}). Revisa la cuota o la cuenta (las institucionales pueden estar bloqueadas).")
+        print(explicar_error_gemini(error) or f"Gemini no respondió ({mensaje_de_error(error)}).")
 
 
 print("--- Registro de partida")
