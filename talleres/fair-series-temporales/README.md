@@ -55,12 +55,12 @@ Los bloques de una misma sesión se siguen uno tras otro, con una pausa entre el
 
 ## Zona de estudio
 
-El agua y la costa de Concepción y Talcahuano, hacia el sur hasta el golfo de Arauco, con algo de tierra cuando haga falta (por ejemplo, humedales y vegetación costera). Con Sentinel-2 trabajarás en puntos y ventanas pequeñas de esa zona. Con la temperatura superficial del mar trabajarás en una malla de 34 a 40 S y 71 a 76 O.
+El agua y la costa de Concepción y Talcahuano, hacia el sur hasta el golfo de Arauco, con algo de tierra cuando haga falta (por ejemplo, humedales y vegetación costera). Con Sentinel-2 trabajarás en puntos y ventanas pequeñas de esa zona. Con la temperatura de superficie de Landsat trabajarás en esos mismos puntos y en una malla de 500 m (0,8 grados) alrededor de la bahía de Concepción y el golfo de Arauco.
 
 ## Datos que se usan
 
 * **Sentinel-2 L2A**, leído como COG desde el catálogo STAC de [Microsoft Planetary Computer](https://planetarycomputer.microsoft.com/). No se descarga nada al repositorio.
-* **NOAA OISST v2.1** (temperatura superficial del mar, diaria, 0,25 grados, desde 1981), también desde Planetary Computer. Una copia preparada de la zona de estudio está en [`datos/`](datos/README.md) para que Colab no dependa de descargas largas. Esa serie tiene un vacío conocido (2024-06-20 a 2026-03-05) que se trabaja a propósito en el bloque 7.
+* **Landsat 8 y 9 Collection 2 Level-2** (USGS: temperatura de superficie y reflectancia, 30 m, un paso cada 8 días con los dos satélites, desde 2013), también desde Planetary Computer. Los datos llegan como números enteros que se **calibran** a °C y a reflectancia. Una copia preparada de las series por punto y de una malla de 500 m está en [`datos/`](datos/README.md) para que Colab no dependa de descargas largas. Las nubes y la revisita de 8 días dejan solo unas 10 a 25 observaciones válidas por año: se trabaja a propósito en el bloque 7.
 * **Repositorios de datos y publicaciones**, consultados con IA en el bloque 1: Zenodo, Dataverse (incluyendo el de la Universidad de Concepción) y, de forma opcional, OpenAlex.
 
 ## Qué entregas
@@ -83,4 +83,4 @@ Dedica unos 30 minutos a esta lista. Los puntos 1 a 3 son los que más tiempo to
 
 ## Licencia
 
-Este material se distribuye bajo la licencia GNU GPL v3. Consulta el archivo [LICENSE](../../LICENSE). Los datos de NOAA OISST son de dominio público.
+Este material se distribuye bajo la licencia GNU GPL v3. Consulta el archivo [LICENSE](../../LICENSE). Los datos de Landsat (USGS) son de dominio público.

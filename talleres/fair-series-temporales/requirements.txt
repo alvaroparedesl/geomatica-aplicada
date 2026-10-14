@@ -6,7 +6,7 @@
 # geopandas, rasterio, shapely, pyproj, matplotlib, plotly, google-genai (Gemini).
 # Python 3.13, pandas 2.2 y numpy 2.1 (los de Colab) son los que se probaron.
 
-# Bloques 2 a 4: catálogos STAC y Sentinel-2
+# Bloques 2 a 4 y 7: catálogos STAC, Sentinel-2 y Landsat
 pystac-client
 planetary-computer
 odc-stac
@@ -17,7 +17,3 @@ mcp
 
 # Bloque 6: gráficos interactivos (usa bokeh y holoviews, que Colab ya trae)
 hvplot
-
-# Bloque 7: validación de la detección de olas de calor. xmhw no está en PyPI:
-# se instala desde GitHub, fijado a la versión con que se probó.
-xmhw @ git+https://github.com/coecms/xmhw@1006312ae693e8aef8bd3706b9afb431eca564a5

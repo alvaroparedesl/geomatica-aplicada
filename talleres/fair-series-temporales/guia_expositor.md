@@ -64,7 +64,7 @@ Al terminar el taller, los participantes serán capaces de:
 1. Evaluar datasets científicos según los principios FAIR y usar un asistente de IA conectado a servidores MCP para consultar repositorios como Zenodo y Dataverse, entendiendo por qué unos metadatos pobres empeoran las respuestas.
 2. Buscar, filtrar y acceder a datos satelitales Sentinel-2 usando catálogos STAC y Python, tomando en cuenta duplicados por reprocesamiento y el desfase (offset) de reflectancia que depende del catálogo y de la versión de procesamiento.
 3. Construir una serie temporal ambiental extrayendo valores en puntos de muestreo, distinguiendo el filtro de nubes de la escena de la máscara de nubes por píxel.
-4. Calcular anomalías respecto de una climatología y detectar eventos extremos, como olas de calor y olas de frío en el agua, con un método clásico (Hobday) y con aprendizaje automático (Isolation Forest), reconociendo los límites que imponen los vacíos en los datos.
+4. Calcular anomalías respecto de una climatología y detectar episodios extremos de temperatura de superficie con Landsat 8 y 9 (calibrando los datos a °C y a reflectancia), con umbrales y con aprendizaje automático (Isolation Forest), reconociendo los límites que imponen las nubes y la revisita de 8 días.
 5. Versionar todo el flujo de trabajo con Git, documentarlo de forma reproducible y publicarlo con metadatos FAIR.
 
 ## Día 1. Fundamentos FAIR, IA y acceso a datos satelitales
@@ -187,11 +187,11 @@ Entregable del día: un cuaderno con la serie temporal de Sentinel-2 para los pu
 
 #### Bloque 5. Análisis exploratorio de la serie temporal
 
-Cuaderno: `05_exploracion_series.py`. Presupuesto: 85 minutos (10 de carga del parquet, 25 de estadísticas y suavizado, 15 de tendencia, 10 de patrones estacionales, 25 de anomalías, OISST e interpretación).
+Cuaderno: `05_exploracion_series.py`. Presupuesto: 85 minutos (10 de carga del parquet, 25 de estadísticas y suavizado, 15 de tendencia, 10 de patrones estacionales, 25 de anomalías, Landsat e interpretación).
 
 El bloque parte del parquet de 12 meses, sin recalcular nada. Se revisan estadísticos descriptivos (media, mediana, percentiles) y la media móvil con `rolling_media`, con ventana en días (`"30D"`) porque las fechas son irregulares. Se calcula la tendencia lineal (`tendencia_lineal`) con una advertencia explícita: con un solo año la pendiente mezcla estación y cambio, y el cuaderno lo muestra ajustando la recta a todo el año y a dos tramos de seis meses (la pendiente de NDWI en la pluma del Biobío cambia de signo).
 
-**Anomalías.** Con un año de datos no hay climatología mensual que valga: cada mes tiene entre 2 y 11 observaciones y el valor extremo forma parte de su propia referencia (un z con *n* valores no puede pasar de (*n* - 1) / raíz de *n*). Por eso el cuaderno usa `anomalias_zscore(referencia="total")`, y muestra que con `"mes"` el golfo de Arauco llega a z = 2,5 donde con `"total"` llega a 8,6. La climatología mensual y las anomalías bien hechas se muestran con la serie OISST del punto (`cargar_oisst("punto")`, base 1991-2020, 848 a 930 observaciones por mes), como puente al bloque 7: en agosto y septiembre de 2026 la anomalía mensual media es de +1,7 y +2,4 (el vacío de 2024-2026 se ve como barras ausentes).
+**Anomalías.** Con un año de datos no hay climatología mensual que valga: cada mes tiene entre 2 y 11 observaciones y el valor extremo forma parte de su propia referencia (un z con *n* valores no puede pasar de (*n* - 1) / raíz de *n*). Por eso el cuaderno usa `anomalias_zscore(referencia="total")`, y muestra que con `"mes"` el golfo de Arauco llega a z = 2,5 donde con `"total"` llega a 8,6. La climatología mensual y las anomalías mejor hechas se muestran con la serie de Landsat 8 y 9 del centro de la bahía (`cargar_landsat()`, base 2013-2024, 9 a 20 observaciones por mes), como puente al bloque 7: en mayo de 2026 la anomalía mensual media es de -0,9 y en septiembre de +0,9 (los meses sin ninguna observación sin nubes se ven como vacíos, no como cero).
 
 Cierra con tres lecturas guiadas: turbidez de la pluma del Biobío (B04 alta en noviembre-diciembre y agosto-septiembre; sin datos de lluvia o caudal es solo una hipótesis), clorofila en las bahías (NDCI cerca de cero en primavera y verano; en invierno hay pocas fechas y agua muy oscura, el índice es ruidoso) y NDVI del humedal (rango corto, 0,5 a 0,6). Se insiste en que son hipótesis y en qué dato faltaría.
 
@@ -207,28 +207,25 @@ Se presentan buenas prácticas para gráficos de series temporales ambientales c
 
 #### Bloque 7. Detección de eventos extremos: umbrales clásicos y aprendizaje automático
 
-Cuaderno: `07_eventos_extremos.py`. Presupuesto: 100 minutos (15 de datos y búsqueda del vacío, 30 de Hobday paso a paso, 15 de resultados y debate del vacío, 10 de validación con `xmhw`, 15 de Isolation Forest, 15 de mapa de frecuencia). El cuaderno tarda unos 85 segundos en ejecutarse completo; el mapa de frecuencia es la parte más lenta (cerca de 50 segundos).
+Cuaderno: `07_eventos_extremos.py`. Presupuesto: 100 minutos (20 de calibración y datos, 15 de serie irregular y control de calidad, 15 de climatología por ventana, 15 de episodios, 10 de agua, tierra y reflectancia, 15 de Isolation Forest, 10 de mapa de frecuencia). El cuaderno tarda unos 60 segundos en ejecutarse completo; las partes más lentas son la lectura de una escena de Landsat (sección 1) y la climatología de la malla (unos 30 segundos).
 
-Este bloque introduce la detección de eventos extremos en series temporales ambientales. Se llama "umbrales clásicos y aprendizaje automático" porque el método de Hobday es estadístico y no de IA, y porque se compara con un método de aprendizaje automático. La IA queda reservada para el bloque 1.
+Este bloque introduce la detección de eventos extremos en series temporales ambientales con **Landsat 8 y 9**. Se llama "umbrales clásicos y aprendizaje automático" porque los percentiles son estadística y no IA, y porque se compara con un método de aprendizaje automático. La IA queda reservada para el bloque 1.
 
-**Datos.** Se usa temperatura superficial del mar de NOAA OISST v2.1, obtenida únicamente de Planetary Computer, y no del bucket de Sentinel-3. En el repositorio hay una copia preparada en `datos/` (una serie en un punto frente a Concepción y una malla de 34 a 40 S y 71 a 76 O) para que Colab no dependa de descargas largas.
+**Datos.** Se usa la temperatura de superficie (banda térmica `lwir11`) y la reflectancia de Landsat 8 y 9 Collection 2 Level-2, obtenidas de Planetary Computer. En el repositorio hay una copia preparada en `datos/` (series por punto de 2013 a 2026 y una malla de 500 m alrededor de la bahía de Concepción y el golfo de Arauco) para que Colab no dependa de descargas largas. El script `datos/preparar_landsat.py` repite todos los pasos y tarda unos 45 minutos.
 
-**Método de Hobday.** Una ola de calor marina es un período de al menos cinco días consecutivos con temperaturas por encima del percentil 90 (una ola de frío, por debajo del percentil 10) respecto de una climatología de referencia. El cuaderno lo implementa en pandas legible, con estos parámetros: línea de base 1991-2020, ventana de 11 días para los percentiles, duración mínima de 5 días y unión de eventos separados por 2 días o menos. El orden importa: primero se filtran las rachas por duración y después se unen las brechas. El resultado se valida contra la librería `xmhw`.
+**Calibración.** Lo primero que ven las personas es que Landsat no entrega grados ni reflectancia, sino números enteros: temperatura (K) = DN x 0,00341802 + 149 y reflectancia = DN x 0,0000275 - 0,2. Calibran a mano una escena despejada del 13 de febrero de 2024 en la bahía (unos 15,3 °C y reflectancia roja de 0,001), ven qué pasa si se saltan un paso (olvidar el offset de -0,2 multiplica la reflectancia por 200), comprueban que las funciones de `utils.raster` hacen lo mismo y que recalcular esa fila con `construir_series_landsat` da el mismo valor que la tabla.
 
-**Comparación con aprendizaje automático.** Se aplica Isolation Forest a la misma serie y se contrasta qué detecta cada método. El punto didáctico es que Isolation Forest no conoce la estacionalidad ni la regla de los cinco días, así que se usa sobre anomalías.
+**Qué no se puede hacer.** Hobday exige una serie diaria sin huecos y 30 años de base. Landsat pasa cada 8 días (16 por satélite), las nubes dejan unas 10 a 25 observaciones válidas por año (230 de 388 pasos en la bahía) y solo hay 13 años. **No se habla de olas de calor marinas**: usar ese nombre sería prometer más de lo que permiten los datos. Se adapta la idea: climatología con una ventana de 31 días (15 a cada lado) en el periodo 2013-2024, p90 y p10, y un **episodio** son al menos 2 observaciones válidas consecutivas anómalas, sin cruzar huecos de más de 24 días. La duración es solo una cota mínima. `utils/extremos.py` conserva el método de Hobday para series diarias y se prueba contra `xmhw` con una serie sintética.
 
-**`marEx`.** Solo se menciona, o se muestra como demostración. No se usa como núcleo del bloque porque no tiene modo de punto, no aplica la regla de los 5 días, no detecta olas de frío, necesita cerca de 12 GB en una malla mediana y declara soporte solo hasta Python 3.12, mientras que Colab usa Python 3.13.
+**Control de calidad con la reflectancia.** Es el hallazgo del bloque. La máscara `qa_pixel` deja pasar nubes delgadas y neblina, que se miden como agua muy fría (anomalías de hasta -16 °C). La reflectancia calibrada las delata (reflectancia roja mayor que 0,05 o SWIR1 mayor que 0,02 en el agua, es decir, demasiado brillo): `controlar_calidad_agua` descarta 50 observaciones de los cinco puntos de agua (9 en la bahía). Se usa el brillo y no el NDWI porque sobre agua oscura la reflectancia NIR es a veces ligeramente negativa (se convierte en NaN) y el NDWI no se puede calcular en 1 de cada 8 observaciones; la regla también puede descartar una floración real de algas. Es una regla simple y declarada: quedan observaciones dudosas que ninguna regla resuelve, y se discuten.
 
-**El vacío de datos como problema didáctico.** Planetary Computer no tiene OISST entre 2024-06-20 y 2026-03-05 (624 días), más los días 2026-03-07 y 2026-03-08. No se rellenó con otra fuente, a propósito. Es un caso real de lo que pasa con una serie incompleta:
+**Resultados de referencia.** Con el control de calidad, en los cinco puntos de agua hay **23 episodios** (13 cálidos y 10 fríos): la bahía no tiene ninguno cálido y tiene 3 fríos (2014-03-05, 2018-09-24 y 2026-05-09), el golfo de Arauco tiene 6 cálidos (el de 2016-01-22 con +3,8 °C) y hay uno en curso desde 2026-09-06 en el golfo (3 observaciones, +1,5 °C). 10 de los 23 coinciden con otro punto: del 1 al 17 de agosto de 2016 tres puntos tienen un episodio cálido a la vez (puede ser clima regional o una nube que cubrió la zona; Landsat no lo distingue). Isolation Forest con la temperatura marca 22 observaciones de la bahía y con tres variables (temperatura, reflectancia roja y NDWI) 18; su Jaccard con el umbral es de 0,37 y 0,21. La correlación entre la anomalía de temperatura y la de la reflectancia roja es negativa (de -0,2 a -0,4): puede ser residuo de nube o agua más turbia y fría, y los datos no permiten elegir. **El muestreo no es estacionario**: antes de 2022 los intervalos entre observaciones válidas son casi siempre de 16 días y desde 2022 (Landsat 9) de 8, así que la brecha máxima de 24 días significa cosas distintas antes y después, y la climatología 2013-2024 pesa más a 2022-2024. No hay que leer tendencias en el conteo de episodios. Si los datos de Planetary Computer se actualizan, estas cifras cambian: corre el cuaderno completo antes del taller y anota los valores definitivos.
 
-* La climatología no se ve afectada, porque se calcula con 1991-2020.
-* Dentro del vacío no se pueden detectar eventos, y una racha nunca debe cruzarlo (un evento no puede "unir" dos fechas separadas por casi dos años).
-* Se discuten tres opciones: rellenar, ignorar o reportar. Se espera que el grupo discuta el costo de cada una.
-* Hay una ola de calor en curso desde 2026-08-17, posterior al vacío, que sirve de ejemplo actual.
+**Agua frente a tierra.** El humedal tiene una mediana de 24 °C frente a 13 a 19 °C del agua y un rango p5 a p95 de 25 °C frente a 5 a 13 °C. Por eso cada punto usa su propia climatología. Se confirma con NDWI y NDVI calibrados.
 
-**Mapa de frecuencia.** Con la malla de 34 a 40 S y 71 a 76 O se calcula la frecuencia de eventos por píxel y se muestra en un mapa.
+**Mapa de frecuencia.** Con la malla de 500 m se calcula la climatología por píxel (base 2013-2024) y la fracción de observaciones de 2025 y 2026 sobre el p90 y bajo el p10. En 2025-2026 la mediana de la malla es de 0,15 sobre el p90 y 0,13 bajo el p10 (esperado 0,10 en ambos): hubo más observaciones extremas de los dos signos, con las fracciones cálidas más altas en el oeste (mar abierto). Un detalle para el debate: la fracción cálida de 2013-2018 es de 0,17 y la de 2019-2024 de 0,08, así que la climatología base no es homogénea. La malla no tiene el control de calidad con la reflectancia: el cuaderno descarta lo que está bajo 3 °C (un 4,6 %, nubes sin marcar) y hay zonas de tierra con muy pocas observaciones (la máscara de nubes parece confundir superficies brillantes con nubes). Con unas 45 observaciones por píxel (de 40 a 60) el ruido de la fracción es de unos 0,05: se mira el patrón espacial, no píxeles sueltos.
 
-**Resultados de referencia.** Con los datos de Planetary Computer solamente (sin rellenar el vacío) y la línea de base 1991-2020, el píxel frente a Concepción da **88 olas de calor y 111 de frío**, coincidentes con `xmhw` (salvo el primer día de la serie y dos categorías, por una definición distinta del día del pico). Los eventos de calor más largos son 1997 (63 días), 1998 (52 días), el El Niño costero de 2017 (44 días) y 1982 (37 y 35 días). Hay una ola de calor en curso desde 2026-08-17 (39 días al 2026-09-24, categoría II). La ola de frío más larga es la de 2007 (96 días). Isolation Forest (contaminación 0,1) no marca ninguno de los días del evento de 2026, porque una anomalía de +1,3 °C no es rara en toda la serie. Un detalle para el debate del vacío: interpolar linealmente da 90 olas de calor, dos de ellas inventadas dentro del vacío (una de 163 días, categoría III). Si los datos de Planetary Computer se actualizan, estas cifras cambian: corre el cuaderno completo antes del taller y anota los valores definitivos.
+**`marEx`.** No se usa en el bloque: no tiene modo de punto, no aplica la regla de los 5 días, no detecta olas de frío y declara soporte solo hasta Python 3.12, mientras que Colab usa Python 3.13.
 
 #### Bloque 8. Git, reproducibilidad y cierre del flujo de trabajo
 
@@ -262,7 +259,7 @@ El ejercicio consiste en subir el cuaderno y los datos derivados al sandbox, com
 
 #### Recapitulación y cierre
 
-Resumen de los conceptos clave: principios FAIR, consulta de repositorios con IA y por qué los metadatos importan, catálogos STAC, Sentinel-2 y su desfase de reflectancia, series temporales, anomalías y eventos extremos (Hobday, Isolation Forest, vacíos de datos) y Git para reproducibilidad. Se comparte una lista de recursos para seguir aprendiendo y se aplica una encuesta final de satisfacción.
+Resumen de los conceptos clave: principios FAIR, consulta de repositorios con IA y por qué los metadatos importan, catálogos STAC, Sentinel-2 y su desfase de reflectancia, series temporales, anomalías y episodios extremos (calibración de Landsat, umbrales, Isolation Forest, nubes y huecos de datos) y Git para reproducibilidad. Se comparte una lista de recursos para seguir aprendiendo y se aplica una encuesta final de satisfacción.
 
 ## Notas técnicas para el expositor
 
@@ -307,7 +304,7 @@ El nivel gratuito de AI Studio no tiene límites publicados por modelo, y los da
 
 El plan original usaba Sentinel-3 desde el bucket público de AWS (MEEO, en formato COG). Se quitó por una razón concreta: **el archivo COG de MEEO no es continuo hasta el presente**. La temperatura superficial (SST) termina en 2024-02 y OLCI no tiene datos entre 2024-03 y 2026-05. Un bloque que dependiera de él fallaría hoy. El producto de Sentinel-3 SLSTR en Planetary Computer sí llega al presente, pero es un producto de franja (*swath*) en NetCDF, con archivos de unos 636 MB cada uno y sin malla regular, que no sirve para extraer el valor de un punto en pocos minutos.
 
-No se reemplazó por otro sensor. El bloque 3 es solo Sentinel-2 y la temperatura del mar aparece en el bloque 7 con OISST.
+No se reemplazó por otro sensor. El bloque 3 es solo Sentinel-2 y la temperatura de superficie aparece en el bloque 7 con la banda térmica de Landsat 8 y 9.
 
 ### Bloque 4. Planetary Computer y el desfase de Sentinel-2
 
@@ -315,9 +312,11 @@ No se reemplazó por otro sensor. El bloque 3 es solo Sentinel-2 y la temperatur
 * **El desfase (offset) de Sentinel-2 se maneja por imagen.** No existe un valor fijo. Depende del catálogo y de la versión de procesamiento (*baseline*), y los helpers lo resuelven imagen por imagen con `agregar_offset`. Los cuadernos antiguos del repositorio, con un desfase fijo de 0,0, subestiman los índices y no deben copiarse. Esto se prueba mucho porque es fácil equivocarse sin notarlo.
 * **Duplicados.** Se agrupa por día solar para quedarse con una escena por fecha.
 
-### Bloque 7. El vacío de OISST
+### Bloque 7. Nubes, escenas dañadas y huecos de Landsat
 
-Planetary Computer no tiene OISST del 2024-06-20 al 2026-03-05 ni los días 2026-03-07 y 2026-03-08. Los archivos de `datos/` conservan el vacío (filas vacías en el CSV, fechas ausentes en la malla). Si Planetary Computer completa algún día esos meses, `datos/preparar_oisst.py` regenera los archivos en unos 10 a 15 minutos, y los números de referencia del bloque habría que recalcularlos. La malla llega hasta 2026-09-24.
+* **Escenas dañadas.** Dos escenas de Planetary Computer (`LC08_L2SP_001086_20140305_02_T1` y `LC08_L2SP_001086_20221106_02_T1`) tienen un archivo que el servidor devuelve como una página de error de 14 kB en vez de un GeoTIFF. La carga falla con "not recognized as being in a supported file format". `datos/preparar_landsat.py` las detecta con `utils.stac.items_legibles` y las excluye. En el cuaderno no se leen: solo se lee una escena del 13 de febrero de 2024.
+* **Nubes que la máscara no ve.** Es esperable que aparezcan observaciones de agua "muy fría" con reflectancia roja alta: son nubes. El control de calidad del cuaderno las descarta. Si alguien propone una regla más dura, conviene discutir qué eventos reales se perderían.
+* **Los números cambian.** Cada vez que se actualiza la colección (y desde 2022 con Landsat 9) hay más fechas. Regenerar los datos con `python preparar_landsat.py` (unos 45 minutos) cambia los números de referencia del bloque.
 
 ## Posibles problemas y soluciones
 
@@ -335,7 +334,7 @@ Planetary Computer no tiene OISST del 2024-06-20 al 2026-03-05 ni los días 2026
 
 **Los widgets de `hvplot` no aparecen en Colab.** Vuelve a ejecutar la extensión de `hvplot` en la misma celda o instala `hvplot` en la sesión. Si no funciona, usa los gráficos sin widgets y deja el mapa de `folium` como demostración.
 
-**Una racha de calor aparece uniendo años distintos en el bloque 7.** Es el vacío de datos: las rachas no deben cruzarlo. Revisa que el cuaderno parte las series en el vacío antes de buscar eventos.
+**Un episodio de calor del bloque 7 dura meses.** Un episodio no debe cruzar un hueco de más de 24 días entre observaciones (`brecha_max_dias`). Revisa que esa regla se aplica y recuerda que la duración es una cota mínima, no una duración real.
 
 **Los participantes no logran hacer `git push`.** Verifica que crearon un token de grano fino, limitado a un solo repositorio, con permiso de contenido de lectura y escritura, que lo guardaron en Colab Secrets con el nombre que usa el cuaderno y que el acceso desde el cuaderno está activado. Dedica diez minutos al inicio del bloque 8 a esta verificación. Si no resulta, usa "Guardar una copia en GitHub" desde el menú de Colab.
 
