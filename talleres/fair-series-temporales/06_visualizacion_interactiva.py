@@ -37,6 +37,7 @@ if "google.colab" in sys.modules:  # Colab: clonar el repositorio (y actualizarl
 else:  # Local: subir desde la carpeta actual hasta encontrar utils/
     RAIZ = next(p for p in [Path.cwd(), *Path.cwd().parents] if (p / "utils").is_dir())
 sys.path.insert(0, str(RAIZ))
+DATOS = RAIZ / "talleres" / "fair-series-temporales" / "datos"  # carpeta con los archivos de datos del taller
 
 # %%
 # @title Instalar hvplot (solo si falta)
@@ -63,7 +64,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 # Funciones de apoyo del curso (carpeta utils/)
-from utils.series import cargar_puntos_csv, cargar_series, rolling_media, serie_de_punto
+from utils.series import cargar_puntos_csv
 from utils.viz import mapa_puntos, serie_interactiva
 
 hvplot.extension("bokeh")  # el motor de gráficos interactivos que usamos
@@ -75,7 +76,7 @@ PALETA = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9"]
 # Los datos: la serie de Sentinel-2 de 12 meses (la misma de los bloques 4 y 5) y los puntos.
 
 # %%
-tabla = cargar_series("series_sentinel2_concepcion.parquet")
+tabla = pd.read_parquet(DATOS / "series_sentinel2_concepcion.parquet")
 puntos = cargar_puntos_csv("puntos_concepcion.csv")
 colores = dict(zip(puntos["id"], PALETA))  # el mismo color para el mismo punto en todos los gráficos
 print(f"{len(tabla)} filas, {tabla['id'].nunique()} puntos, {tabla['fecha'].min():%Y-%m-%d} a {tabla['fecha'].max():%Y-%m-%d}")
@@ -176,11 +177,12 @@ grafico
 # %% [markdown]
 # Pasa el cursor por un punto: además del valor, el cuadro muestra las nubes de la escena y la fracción de la ventana válida. Poner **la calidad del dato en el tooltip** es una de las mejores ventajas de un gráfico interactivo.
 #
-# Los gráficos de `hvplot` se **combinan** con `*` (uno sobre otro) y `+` (uno junto a otro). Por ejemplo, las observaciones de la pluma del Biobío con su media móvil de 30 días (`rolling_media`, del bloque 5):
+# Los gráficos de `hvplot` se **combinan** con `*` (uno sobre otro) y `+` (uno junto a otro). Por ejemplo, las observaciones de la pluma del Biobío con su media móvil de 30 días (`rolling`, del bloque 5):
 
 # %%
-pluma = serie_de_punto(tabla, "biobio_pluma", "b04")
-df_pluma = pd.DataFrame({"b04": pluma, "media móvil 30 d": rolling_media(pluma, "30D", minimo=3)}).reset_index()
+# La serie de B04 de la pluma: filtrar por punto, fecha como índice y sin los NaN (como en el bloque 5)
+pluma = tabla[tabla["id"] == "biobio_pluma"].set_index("fecha")["b04"].dropna()
+df_pluma = pd.DataFrame({"b04": pluma, "media móvil 30 d": pluma.rolling("30D", min_periods=3, center=True).mean()}).reset_index()
 
 observaciones = df_pluma.hvplot.scatter(x="fecha", y="b04", color="gray", size=30, label="observaciones")
 suavizada = df_pluma.dropna(subset=["media móvil 30 d"]).hvplot.line(x="fecha", y="media móvil 30 d", color="#0072B2", line_width=3, label="media móvil 30 d")
@@ -243,7 +245,7 @@ def resumen_html(id_punto):
 
 def miniatura_png(id_punto, variable):
     """Gráfico pequeño de una serie, como imagen PNG en base64 (para incrustar en el popup)."""
-    s = serie_de_punto(tabla, id_punto, variable)
+    s = tabla[tabla["id"] == id_punto].set_index("fecha")[variable].dropna()
     fig, eje = plt.subplots(figsize=(3.4, 1.4))
     eje.plot(s.index, s.values, marker="o", markersize=2, linewidth=0.8, color=colores[id_punto])
     eje.set_title(f"{variable.upper()} en el tiempo", fontsize=8)
