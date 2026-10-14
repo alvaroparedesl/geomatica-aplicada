@@ -260,6 +260,8 @@ Cómo se aplica, paso a paso (el flujo del ejemplo de arriba):
    fechas).
 3. `agregar_offset` decide el offset de cada imagen con `offset_sentinel2` y lo
    guarda en la coordenada `offset_reflectancia` (un valor por fecha).
+   (Los cuadernos del taller no llaman a estas funciones: escriben la misma regla a la vista.
+   `test_cuadernos_taller.py` comprueba que dan el mismo resultado.)
 4. `convertir_a_reflectancia` / `preparar_reflectancia` usan esa coordenada.
    Al seleccionar una fecha (`ds.sel(time=...)`) el offset se conserva; al
    combinar fechas (`ds.median("time")`) se pierde, así que **convierte a
@@ -314,6 +316,7 @@ reales grabados, así que la regla del offset se prueba sin conexión:
 | `test_busqueda_offline.py` | `parametros_busqueda`, elección de catálogo (`earthsearch` es c1, `earthsearch-l2a` desactivado, Landsat solo en Planetary Computer), aviso del hueco de c1 y `preparar_items` |
 | `test_carga_offline.py` | `parametros_carga`, `groupby`, `renombrar_bandas` y `agregar_offset` con `odc.stac.load` real sobre archivos locales; dedupe, catálogos mezclados, offsets distintos en un mismo día |
 | `test_reflectancia.py` | `convertir_a_reflectancia` con cubos sintéticos: offset por fecha, DN 0 a NaN, error al combinar fechas antes de convertir; `convertir_a_temperatura` de Landsat (DN a K y a °C) y la máscara de saturación |
+| `test_cuadernos_taller.py` | El offset y la reflectancia que los cuadernos 02 a 04 del taller escriben a la vista (extraídos de los `.py`) dan lo mismo que `offset_sentinel2`, `agregar_offset` y `convertir_a_reflectancia` |
 | `test_general.py` | Vectorial, raster y gráficos con datos sintéticos |
 | `test_series.py` | Puntos, `extraer_series_puntos` con ventana, el flujo Sentinel-2 completo (`cargar_ventanas` + `construir_series`) con GeoTIFF locales y offsets por fecha, `construir_series_landsat` con ventanas sintéticas (calibración, máscara, fechas nubladas), `items_legibles` (archivos dañados), análisis de series, parquet, la serie preparada del taller y los gráficos (folium, hvplot) |
 | `test_extremos.py` | Hobday con series sintéticas (racha de 5 y de 4 días, brechas de 2 y 3, filtrar antes de unir, vacíos que no se puentean, frío, 29 de febrero, evento en curso), comparación con `xmhw` (si está instalado), malla diaria e Isolation Forest. Landsat: climatología por ventana, episodios (racha de observaciones, nubes que no cortan, brecha máxima), control de calidad con la reflectancia, malla de 500 m y los datos reales preparados del taller (calibración, huecos, episodios de referencia) |
