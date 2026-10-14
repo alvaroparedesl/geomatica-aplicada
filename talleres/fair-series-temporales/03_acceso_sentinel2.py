@@ -71,10 +71,9 @@ from rasterio.warp import transform_bounds
 from rasterio.windows import from_bounds
 
 # Funciones de apoyo del curso (carpeta utils/)
-from utils.raster import calcular_indices, convertir_a_reflectancia, lonlat_a_crs
+from utils.raster import calcular_indices, lonlat_a_crs
 from utils.series import bbox_punto, cargar_puntos_csv
-from utils.stac import (agregar_offset, conectar_catalogo, parametros_busqueda, parametros_carga, preparar_items,
-                        renombrar_bandas, resumir_imagenes)
+from utils.stac import conectar_catalogo, parametros_busqueda, parametros_carga, preparar_items, resumir_imagenes
 from utils.viz import crear_imagen_rgb, mostrar_imagen
 
 warnings.filterwarnings("ignore", message="Dataset has no geotransform")
@@ -149,8 +148,7 @@ for banda in ["B08", "SCL"]:
 #
 # 1. `parametros_carga(...)` arma el diccionario de argumentos de `odc.stac.load`: nombres de banda, CRS, resolución, firma de los enlaces y un `groupby` que nunca mezcla fechas con offsets distintos. **No carga nada.**
 # 2. `odc.stac.load(items, **parametros)` es la llamada nativa que lee.
-# 3. `agregar_offset(datos, items)` guarda en la coordenada `offset_reflectancia` el offset de cada fecha (recuerda el bloque 2: depende del catálogo y del baseline).
-# 4. `convertir_a_reflectancia(...)` usa esa coordenada para pasar de números digitales (DN) a reflectancia.
+# 3. La conversión de números digitales (DN) a reflectancia la escribimos **a mano**, más abajo, con el offset de la imagen (recuerda el bloque 2: depende del baseline).
 #
 # Pedimos cinco bandas y la clasificación de la escena (`SCL`):
 #
@@ -175,24 +173,36 @@ print("Argumentos de odc.stac.load:", {k: v for k, v in parametros_ds.items() if
 
 t0 = time.time()
 datos = odc.stac.load(items, **parametros_ds)  # perezosa (dask): aún no lee píxeles
-datos = renombrar_bandas(datos, catalogo)      # B02, B04, ... en cualquier catálogo
-datos = agregar_offset(datos, items)           # offset de cada fecha
 print(datos)
 
 # %% [markdown]
-# `datos` describe qué vamos a leer (2.595 x 2.193 píxeles de 10 m) pero todavía no leyó nada. `.compute()` lee los bloques necesarios. Seleccionamos la única fecha con `isel(time=0)` (el offset se conserva al elegir una fecha).
+# `datos` describe qué vamos a leer (2.595 x 2.193 píxeles de 10 m) pero todavía no leyó nada. `.compute()` lee los bloques necesarios. Seleccionamos la única fecha con `isel(time=0)`.
 
 # %%
 t0 = time.time()
 escena = datos.isel(time=0).compute()
 print(f"Lectura: {time.time() - t0:.0f} s | memoria: {sum(v.nbytes for v in escena.data_vars.values()) / 1e6:.0f} MB")
-print("Offset de reflectancia de esta fecha:", float(escena.offset_reflectancia))
 
 # %% [markdown]
-# Los valores son **DN** (por ejemplo, 1.185), no reflectancias. Convertimos con `convertir_a_reflectancia`, que usa el offset de la fecha. Dejamos fuera `SCL`, que es una clase y no una reflectancia.
+# Los valores son **DN** (por ejemplo, 1.185), no reflectancias. Los convertimos a mano en dos pasos. Dejamos fuera `SCL`, que es una clase y no una reflectancia.
+#
+# **Paso 1: el offset de la imagen.** La reflectancia de Sentinel-2 L2A es `DN * 0,0001 + offset`. El offset depende de la versión de procesamiento (*baseline*) de la imagen, que está en sus metadatos.
 
 # %%
-refl = convertir_a_reflectancia(escena[["B02", "B03", "B04", "B05", "B08"]], "sentinel-2")
+# baseline 04.00 o posterior: a los DN se les sumaron 1000, así que hay que restar 1000 * 0.0001 = 0.1
+# baseline anterior: los DN no tienen ese desfase, el offset es 0
+baseline = float(item.properties["s2:processing_baseline"])  # "05.11" -> 5.11
+offset = -0.1 if baseline >= 4.0 else 0.0
+print(f"Baseline {item.properties['s2:processing_baseline']} -> offset {offset}")
+
+# %% [markdown]
+# **Paso 2: la fórmula.** Aplicamos `DN * 0,0001 + offset` a las cinco bandas espectrales.
+
+# %%
+bandas_espectrales = ["B02", "B03", "B04", "B05", "B08"]
+dn = escena[bandas_espectrales]
+refl = dn.where(dn != 0) * 0.0001 + offset  # un DN de 0 significa "sin dato": pasa a NaN
+refl = refl.where((refl >= 0) & (refl <= 1))  # una reflectancia válida está entre 0 y 1; lo demás pasa a NaN
 scl = escena["SCL"]
 print({b: f"{float(refl[b].min()):.4f} a {float(refl[b].max()):.2f}" for b in refl.data_vars})
 
@@ -208,12 +218,12 @@ mostrar_imagen(rgb, "Concepción y Talcahuano, 10 de agosto de 2026 (color verda
 # %% [markdown]
 # Se ve la bahía de Concepción (arriba), la península de Hualpén, el Biobío bajando hacia el mar (abajo) y su **pluma de sedimentos** (agua más pardusca) frente a la desembocadura. Pero hay **huecos blancos**, sobre todo en los cerros con bosque (al este y suroeste). ¿Qué son?
 #
-# `convertir_a_reflectancia` pone en `NaN` los valores **fuera de 0 a 1**. En píxeles muy oscuros (sombras, bosque denso, agua limpia), la corrección atmosférica puede dar reflectancias levemente **negativas**, y esos píxeles quedan sin valor. Lo comprobamos:
+# La conversión de arriba pone en `NaN` los valores **fuera de 0 a 1**. En píxeles muy oscuros (sombras, bosque denso, agua limpia), la corrección atmosférica puede dar reflectancias levemente **negativas**, y esos píxeles quedan sin valor. Lo comprobamos:
 
 # %%
 for banda in ["B02", "B03", "B04", "B05", "B08"]:
     dn = escena[banda]
-    negativos = float(((dn * 0.0001 + float(escena.offset_reflectancia)) < 0).mean()) * 100
+    negativos = float(((dn * 0.0001 + offset) < 0).mean()) * 100
     print(f"{banda}: {negativos:.1f} % de los píxeles tiene reflectancia negativa y queda en NaN")
 
 # %% [markdown]
@@ -453,7 +463,7 @@ plt.show()
 # ## Resumen
 #
 # * Un **COG** guarda la imagen en teselas con pirámides: se puede leer una ventana o una miniatura sin descargar la escena entera.
-# * El patrón de carga es nativo y explícito: `parametros_carga` arma los argumentos, `odc.stac.load` lee, `agregar_offset` anota el offset de cada fecha y `convertir_a_reflectancia` lo usa. **Convierte a reflectancia antes de combinar fechas.**
+# * El patrón de carga es nativo y explícito: `parametros_carga` arma los argumentos, `odc.stac.load` lee, el offset de reflectancia lo lees del `baseline` de cada imagen y lo aplicas tú (`DN * 0,0001 + offset`). **Convierte a reflectancia antes de combinar fechas.**
 # * Los píxeles muy oscuros pueden tener reflectancia negativa y quedan en `NaN`: se pintan de negro para mirar, pero no se inventan para calcular.
 # * **NDWI** separa agua de tierra; **NDCI** apunta a la clorofila; la **reflectancia roja** a la turbidez (la pluma del Biobío frente a la bahía); **NDVI** a la vegetación.
 # * Un píxel suelto es ruidoso: en el bloque 4 usaremos la mediana de una ventana alrededor de cada punto.
