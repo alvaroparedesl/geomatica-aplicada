@@ -7,7 +7,7 @@ desde GitHub a una carpeta temporal. Así los cuadernos funcionan igual en Colab
 en un computador con el repositorio y en uno sin él.
 
     from utils.datos_taller import abrir_dato
-    ruta = abrir_dato("oisst_concepcion.csv")     # pathlib.Path local
+    ruta = abrir_dato("puntos_concepcion.csv")    # pathlib.Path local
 """
 
 import tempfile
@@ -27,7 +27,7 @@ def abrir_dato(nombre, forzar_descarga=False):
     devuelve la ruta de la copia.
 
     Args:
-        nombre (str): Nombre del archivo, por ejemplo "oisst_centro_sur.nc".
+        nombre (str): Nombre del archivo, por ejemplo "landsat_malla_concepcion.nc".
         forzar_descarga (bool): Si es True, ignora la copia local y descarga de nuevo
             (útil para comprobar que el archivo publicado en GitHub es el mismo).
 

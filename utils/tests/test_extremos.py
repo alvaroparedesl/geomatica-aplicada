@@ -1,5 +1,6 @@
 """
-Pruebas de `utils/extremos.py` (olas de calor y de frío marinas, método de Hobday).
+Pruebas de `utils/extremos.py`: método de Hobday (series diarias) y anomalías y episodios
+con series irregulares de Landsat 8 y 9.
 
 Todo es offline. Los casos límite de la detección se prueban con series
 sintéticas sobre una climatología plana (media 0, p90 = 1, p10 = -1), donde cada
@@ -13,21 +14,32 @@ día se puede razonar a mano:
 * olas de frío (espejo de las de calor) y evento en curso;
 * 29 de febrero (día 60 en el calendario de 366 días) en la climatología y en la duración.
 
-Además: la climatología contra valores conocidos, los datos reales de OISST (los
-conteos que se obtienen con 88 olas de calor y 111 de frío, el evento en curso
-y el vacío de 2024-2026), la comparación con `xmhw` (se omite si no está
-instalado), la malla y el Isolation Forest.
+Además: la climatología contra valores conocidos, la comparación con `xmhw` (se omite si no
+está instalado), la malla y el Isolation Forest. Para Landsat: la climatología por ventana, los
+episodios (racha de observaciones, brecha máxima, nubes que no cortan la racha), la malla de 500 m
+y los datos reales preparados del taller (calibración, huecos y cobertura).
 """
 
 import numpy as np
 import pandas as pd
 import pytest
+import xarray as xr
 
 from utils import datos_taller
 from utils.extremos import (
     aislamiento_forest,
     aplicar_climatologia,
-    cargar_oisst,
+    anomalias_observaciones,
+    anomalia_malla,
+    aislamiento_forest_observaciones,
+    cargar_landsat,
+    controlar_calidad_agua,
+    episodios_por_punto,
+    climatologia_malla,
+    climatologia_ventana,
+    detectar_episodios,
+    frecuencia_anomalias_malla,
+    serie_landsat,
     climatologia_hobday,
     detectar_eventos,
     dia_del_anio_366,
@@ -297,65 +309,180 @@ def test_el_suavizado_cierra_el_año():
 
 
 # ---------------------------------------------------------------------------
-# Datos reales de OISST (archivos del repositorio)
+# Landsat: series irregulares (climatología por ventana, anomalías y episodios)
 # ---------------------------------------------------------------------------
-@pytest.fixture(scope="module")
-def sst():
-    return cargar_oisst()
+def serie_irregular(fechas, valores):
+    return pd.Series(np.asarray(valores, dtype=float), index=pd.DatetimeIndex(fechas), name="st_c")
 
 
-def test_cargar_oisst_punto(sst):
-    assert sst.index.freqstr == "D" and sst.name == "sst_c"
-    assert sst.index[0] == pd.Timestamp("1981-09-01") and sst.index[-1] >= pd.Timestamp("2026-09-01")
-    assert sst.isna().sum() == 626  # 2024-06-20 a 2026-03-05 (624 días) y 2026-03-07 y -08
-    assert sst["2024-06-20":"2026-03-05"].isna().all() and sst["2024-06-19"] > 0 and sst["2026-03-06"] > 0
-    assert sst["2026-03-07":"2026-03-08"].isna().all()
+def _landsat_sintetica(anios=12, semilla=3, nubes=0.4):
+    """Un paso cada 8 días desde 2013, ciclo anual de 3 °C (máximo a fines de enero) más ruido, con 40 % de fechas nubladas (NaN)."""
+    rng = np.random.default_rng(semilla)
+    fechas = pd.date_range("2013-04-01", periods=int(anios * 365.25 / 8), freq="8D")
+    valores = 15 + 3 * np.sin(2 * np.pi * (fechas.dayofyear.to_numpy() + 61) / 365.25) + rng.normal(0, 0.5, len(fechas))
+    valores[rng.random(len(fechas)) < nubes] = np.nan
+    return pd.Series(valores, index=fechas, name="st_c")
 
 
-def test_cargar_oisst_malla():
-    malla = cargar_oisst("malla")
-    assert malla.dims == ("time", "lat", "lon") and malla.sizes["lat"] == 24 and malla.sizes["lon"] == 20
-    assert malla.time.to_index().freqstr == "D"  # calendario completo: los días ausentes son NaN
-    assert malla.sel(time="2025-01-01").isnull().all()  # dentro del vacío
-    assert malla.sel(time="2023-01-01").notnull().sum() > 100  # el mar tiene datos
+def test_climatologia_ventana_junta_observaciones_de_todos_los_anios():
+    s = _landsat_sintetica()
+    clima = climatologia_ventana(s, base=(2013, 2024), suavizado=None)
+    assert list(clima.columns) == ["media", "p90", "p10", "n"] and list(clima.index) == list(range(1, 367))
+    # 12 años x unas 4 pasadas por ventana de 31 días x 60 % sin nubes: decenas de observaciones, no cientos
+    assert 15 < clima["n"].median() < 40
+    assert (clima["p90"] > clima["media"]).all() and (clima["media"] > clima["p10"]).all()
+    # el ciclo anual se recupera: máximo en verano austral (enero a marzo), mínimo en invierno
+    assert clima["media"].idxmax() < 100 or clima["media"].idxmax() > 330
+    assert 150 < clima["media"].idxmin() < 280
+    # solo cuentan los años de la base
+    assert climatologia_ventana(s, base=(2013, 2016), suavizado=None)["n"].sum() < clima["n"].sum() / 2
+
+
+def test_climatologia_ventana_no_inventa_dias_sin_observaciones_suficientes():
+    s = _landsat_sintetica(anios=2)
+    clima = climatologia_ventana(s, base=(2013, 2015), minimo_obs=50)
+    assert clima["media"].isna().all()
+    clima = climatologia_ventana(_landsat_sintetica(), minimo_obs=8, suavizado=15)
+    assert clima["media"].notna().all()
+    with pytest.raises(ValueError, match="impares"):
+        climatologia_ventana(s, ventana=30)
+    with pytest.raises(ValueError, match="datos entre"):
+        climatologia_ventana(s, base=(1990, 1995))
+
+
+def test_anomalias_de_observaciones_alinean_por_dia_del_anio():
+    s = serie_irregular(["2020-03-01", "2021-03-01", "2020-07-10"], [2.0, np.nan, -3.0])
+    tabla = anomalias_observaciones(s, CLIMA_PLANA)
+    assert list(tabla["anomalia"].dropna()) == [2.0, -3.0]
+    assert list(tabla["excede_calor"]) == [True, False, False] and list(tabla["excede_frio"]) == [False, False, True]
+
+
+def episodios(fechas, valores, tipo="calor", **kw):
+    return detectar_episodios(serie_irregular(fechas, valores), CLIMA_PLANA, tipo, **kw)
+
+
+def test_episodio_de_observaciones_seguidas_con_su_duracion_en_dias():
+    ev = episodios(["2021-03-01", "2021-03-09", "2021-03-17", "2021-03-25"], [0, 3, 2, 0])
+    assert len(ev) == 1
+    fila = ev.iloc[0]
+    assert fila["inicio"] == pd.Timestamp("2021-03-09") and fila["fin"] == pd.Timestamp("2021-03-17")
+    assert fila["n_obs"] == 2 and fila["duracion"] == 9  # cota mínima: de la primera a la última observación
+    assert fila["dia_pico"] == pd.Timestamp("2021-03-09") and fila["intensidad_max"] == 3 and fila["intensidad_media"] == 2.5
+    assert not fila["en_curso"]
+
+
+def test_una_sola_observacion_no_es_episodio_salvo_que_se_pida():
+    fechas, valores = ["2021-03-01", "2021-03-09", "2021-03-17"], [0, 3, 0]
+    assert episodios(fechas, valores).empty
+    assert len(episodios(fechas, valores, min_obs=1)) == 1
+
+
+def test_una_observacion_normal_en_medio_corta_el_episodio():
+    assert episodios(["2021-03-01", "2021-03-09", "2021-03-17"], [2, 0, 2]).empty
+
+
+def test_las_nubes_no_cortan_el_episodio_pero_un_hueco_largo_si():
+    # una fecha nublada (NaN) entre dos observaciones anómalas: sigue siendo un episodio
+    ev = episodios(["2021-03-01", "2021-03-09", "2021-03-17"], [2, np.nan, 2])
+    assert len(ev) == 1 and ev.loc[0, "n_obs"] == 2 and ev.loc[0, "duracion"] == 17
+    # 24 días entre observaciones: todavía se une; 25: ya no
+    assert len(episodios(["2021-03-01", "2021-03-25"], [2, 2])) == 1
+    assert episodios(["2021-03-01", "2021-03-26"], [2, 2]).empty
+    assert len(episodios(["2021-03-01", "2021-03-26"], [2, 2], brecha_max_dias=30)) == 1
+
+
+def test_episodios_de_frio_y_episodio_en_curso():
+    ev = episodios(["2021-03-01", "2021-03-09", "2021-03-17"], [0, -2, -4], tipo="frio")
+    assert len(ev) == 1 and ev.loc[0, "en_curso"] and ev.loc[0, "intensidad_max"] == -4
+    assert evento_en_curso(ev)["inicio"] == pd.Timestamp("2021-03-09")
+    assert episodios(["2021-03-01", "2021-03-09"], [-2, -4], tipo="calor").empty
     with pytest.raises(ValueError, match="tipo"):
-        cargar_oisst("otro")
+        episodios(["2021-03-01"], [1], tipo="otro")
 
 
-def test_hobday_sobre_oisst_concepcion(sst):
-    """Resultado de referencia del taller (validado con xmhw): ver el docstring del módulo."""
-    clima = climatologia_hobday(sst)
-    calor, frio = detectar_eventos(sst, clima, "calor"), detectar_eventos(sst, clima, "frio")
-    assert (len(calor), len(frio)) == (88, 111)
-    mayores = calor.nlargest(3, "duracion")
-    assert list(mayores["inicio"].dt.year) == [1997, 1998, 2017]
-    assert list(mayores["duracion"]) == [63, 52, 44]
-    # el evento en curso empieza el 2026-08-17, después del vacío, y llega al último día
-    actual = evento_en_curso(calor)
-    assert actual["inicio"] == pd.Timestamp("2026-08-17") and actual["fin"] == sst.index[-1]
-    assert not frio["en_curso"].any()
-    # ningún evento cruza el vacío de 2024-2026
-    vacio = pd.Timestamp("2024-06-20"), pd.Timestamp("2026-03-05")
-    for ev in (calor, frio):
-        assert not ((ev["inicio"] <= vacio[1]) & (ev["fin"] >= vacio[0])).any()
-    por_decada = resumen_eventos(calor, "decada")
-    assert por_decada["n_eventos"].sum() == 88 and list(por_decada.index) == [1980, 1990, 2000, 2010, 2020]
-    assert resumen_eventos(calor).loc[0, "n_eventos"] == 88
+def test_dos_episodios_separados_por_una_observacion_normal():
+    fechas = pd.date_range("2021-03-01", periods=7, freq="8D")
+    ev = episodios(fechas, [2, 2, 0, 3, 3, 3, 0])
+    assert list(ev["n_obs"]) == [2, 3] and list(ev["duracion"]) == [9, 17]
+    assert resumen_eventos(ev).loc[0, "n_eventos"] == 2
 
 
-def test_resumen_de_eventos_vacio_y_por_anio():
-    vacio = eventos(serie_plana())
-    assert resumen_eventos(vacio).loc[0, "n_eventos"] == 0 and resumen_eventos(vacio, "anio").empty
-    s = serie_plana(n=400, tramos=[(10, [2] * 6), (300, [2] * 7)])
-    por_anio = resumen_eventos(eventos(s), "anio")
-    assert list(por_anio.index) == [2021] and por_anio.loc[2021, "dias_totales"] == 13
-    with pytest.raises(ValueError, match="por"):
-        resumen_eventos(eventos(s), "mes")
+def test_episodio_inyectado_en_serie_sintetica():
+    s = _landsat_sintetica(nubes=0.2)
+    clima = climatologia_ventana(s, base=(2013, 2018))
+    # 4 observaciones seguidas muy cálidas en 2022
+    posiciones = np.flatnonzero((s.index >= "2022-01-10") & s.notna().to_numpy())[:4]
+    s.iloc[posiciones] += 4
+    ev = detectar_episodios(s, clima, "calor")
+    inyectado = ev[(ev["inicio"] >= "2022-01-01") & (ev["inicio"] <= "2022-03-01")]
+    assert len(inyectado) == 1 and inyectado.iloc[0]["n_obs"] >= 4 and inyectado.iloc[0]["intensidad_max"] > 3
+
+
+def test_isolation_forest_de_observaciones_marca_la_rara_y_respeta_las_nubes():
+    pytest.importorskip("sklearn")
+    s = _landsat_sintetica(nubes=0.2)
+    tabla = pd.DataFrame({"st_c": s, "rojo": 0.02 + 0.001 * np.random.default_rng(0).normal(size=len(s))})
+    tabla.iloc[100, 0] = 30.0  # una observación absurda (y su reflectancia normal)
+    tabla.iloc[100, 1] = 0.02
+    clima = {"st_c": climatologia_ventana(s)}
+    res = aislamiento_forest_observaciones(tabla, ["st_c", "rojo"], clima, contaminacion=0.05)
+    assert res.loc[tabla.index[100], "atipico"]
+    assert not res.loc[tabla["st_c"].isna(), "atipico"].any() and res.loc[tabla["st_c"].isna(), "puntaje"].isna().all()
+    assert res["atipico"].sum() == pytest.approx(0.05 * tabla["st_c"].notna().sum(), abs=3)
+    repetido = aislamiento_forest_observaciones(tabla, ["st_c", "rojo"], clima, contaminacion=0.05)
+    assert res["atipico"].equals(repetido["atipico"])
+
+
+def _malla_landsat_sintetica():
+    s = _landsat_sintetica(nubes=0.0)
+    base = s.to_numpy()
+    datos = np.stack([np.stack([base, base + 1.0], axis=-1),            # y = 0: dos píxeles de mar (el segundo, 1 °C más cálido)
+                      np.full((len(base), 2), np.nan)], axis=1)         # y = 1: píxeles sin ningún dato
+    return xr.DataArray(datos, dims=("time", "y", "x"), coords={"time": s.index, "y": [5.0e6, 5.0e6 - 500], "x": [6.0e5, 6.0e5 + 500]},
+                        name="st_c")
+
+
+def test_climatologia_de_malla_coincide_con_la_de_un_punto():
+    malla = _malla_landsat_sintetica()
+    clima = climatologia_malla(malla, base=(2013, 2024), paso=8)
+    assert set(clima.data_vars) == {"media", "p90", "p10", "n"} and clima.sizes["centro"] == len(range(1, 367, 8))
+    punto = climatologia_ventana(malla.isel(y=0, x=0).to_series(), base=(2013, 2024), suavizado=None)
+    centros = clima["centro"].values
+    esperada = punto.loc[centros]
+    np.testing.assert_allclose(clima["media"].isel(y=0, x=0).values, esperada["media"].values, atol=1e-4)
+    np.testing.assert_allclose(clima["p90"].isel(y=0, x=0).values, esperada["p90"].values, atol=1e-4)
+    assert (clima["n"].isel(y=0, x=0).values == esperada["n"].values).all()
+    np.testing.assert_allclose(clima["media"].isel(y=0, x=1).values, clima["media"].isel(y=0, x=0).values + 1.0, atol=1e-4)
+    assert clima["media"].isel(y=1).isnull().all() and (clima["n"].isel(y=1) == 0).all()
+
+
+def test_anomalia_y_frecuencia_de_anomalias_en_la_malla():
+    malla = _malla_landsat_sintetica()
+    clima = climatologia_malla(malla, base=(2013, 2020), paso=8)
+    anomalia = anomalia_malla(malla, clima)
+    assert anomalia.dims == malla.dims and abs(float(anomalia.isel(y=0, x=0).mean())) < 0.2
+    frec = frecuencia_anomalias_malla(malla, clima, "calor")
+    assert set(frec.data_vars) == {"n_obs", "n_anomalas", "fraccion"}
+    # en el periodo base, cerca del 10 % de las observaciones supera el p90 de su píxel
+    assert float(frec["fraccion"].isel(y=0, x=0)) == pytest.approx(0.10, abs=0.04)
+    assert frec["fraccion"].isel(y=1).isnull().all()  # sin datos: NaN, no 0
+    # en un periodo más reciente con un calentamiento de 2 °C casi todo excede el p90
+    calentada = malla.where(malla.time.dt.year < 2022, malla + 2.0)
+    reciente = frecuencia_anomalias_malla(calentada, clima, "calor", periodo=(2022, 2024))
+    assert float(reciente["fraccion"].isel(y=0, x=0)) > 0.8
+    assert float(reciente["n_obs"].isel(y=0, x=0)) < float(frec["n_obs"].isel(y=0, x=0))
+    frio = frecuencia_anomalias_malla(calentada, clima, "frio", periodo=(2022, 2024))
+    assert float(frio["fraccion"].isel(y=0, x=0)) == 0.0
+    with pytest.raises(ValueError, match="tipo"):
+        frecuencia_anomalias_malla(malla, clima, "otro")
+
+
+
 
 
 def test_abrir_dato_descarga_si_no_hay_copia_local(tmp_path, monkeypatch):
     class Respuesta:
-        content = b"fecha,sst_c\n2020-01-01,15\n"
+        content = b"fecha,valor\n2020-01-01,15\n"
 
         def raise_for_status(self):
             pass
@@ -366,10 +493,10 @@ def test_abrir_dato_descarga_si_no_hay_copia_local(tmp_path, monkeypatch):
     import requests
 
     monkeypatch.setattr(requests, "get", lambda url, timeout: pedidos.append(url) or Respuesta())
-    ruta = datos_taller.abrir_dato("oisst_concepcion.csv")
-    assert ruta.read_text().startswith("fecha,sst_c") and pedidos[0].endswith("/datos/oisst_concepcion.csv")
+    ruta = datos_taller.abrir_dato("prueba.csv")
+    assert ruta.read_text().startswith("fecha,valor") and pedidos[0].endswith("/datos/prueba.csv")
     assert "raw.githubusercontent.com/alvaroparedesl/geomatica-aplicada" in pedidos[0]
-    datos_taller.abrir_dato("oisst_concepcion.csv")  # segunda vez: usa la copia, sin descargar
+    datos_taller.abrir_dato("prueba.csv")  # segunda vez: usa la copia, sin descargar
     assert len(pedidos) == 1
 
 
@@ -460,3 +587,140 @@ def test_isolation_forest_marca_el_evento_inyectado_y_respeta_los_vacios():
     assert resultado["atipico"].equals(repetido["atipico"])  # misma semilla, mismo resultado
     hobday = marcar_dias_evento(s, detectar_eventos(s, climatologia_hobday(s), "calor"))
     assert solapamiento(hobday, resultado["atipico_calor"])["comunes"] >= 15
+
+
+def _tabla_puntos_sintetica():
+    s = _landsat_sintetica(nubes=0.2)
+    filas = []
+    for punto, tipo, rojo, ndwi in (("a", "bahia", 0.01, 0.8), ("b", "humedal", 0.06, -0.6)):
+        sub = pd.DataFrame({"id": punto, "nombre": punto.upper(), "tipo": tipo, "fecha": s.index, "st_dn": 40000.0, "st_c": s.to_numpy(),
+                            "verde": 0.02, "rojo": rojo, "nir": 0.01, "swir1": 0.01, "ndwi": ndwi, "ndvi": -0.3})
+        filas.append(sub)
+    tabla = pd.concat(filas, ignore_index=True)
+    con_dato = s.dropna().index
+    tabla.loc[(tabla["id"] == "a") & (tabla["fecha"] == con_dato[50]), ["rojo"]] = 0.9      # nube sin marcar sobre agua
+    tabla.loc[(tabla["id"] == "a") & (tabla["fecha"] == con_dato[60]), ["swir1"]] = 0.3     # SWIR1 brillante sobre agua
+    tabla.loc[(tabla["id"] == "b") & (tabla["fecha"] == con_dato[50]), ["rojo"]] = 0.9      # el humedal (tierra) no se toca
+    return tabla
+
+
+def test_control_de_calidad_descarta_solo_el_agua_sospechosa():
+    tabla = _tabla_puntos_sintetica()
+    limpia = controlar_calidad_agua(tabla)
+    nuevas = (limpia["st_c"].isna() & tabla["st_c"].notna())
+    assert nuevas.sum() == 2 and set(limpia.loc[nuevas, "id"]) == {"a"}
+    assert limpia.loc[nuevas, ["st_dn", "rojo", "swir1"]].isna().all().all()  # todas las variables, no solo la temperatura
+    assert len(limpia) == len(tabla) and (limpia["fecha"] == tabla["fecha"]).all()  # la fecha se conserva
+    assert (limpia.loc[limpia["id"] == "b", "st_c"].dropna() == tabla.loc[tabla["id"] == "b", "st_c"].dropna()).all()
+    assert tabla["st_c"].notna().sum() == controlar_calidad_agua(tabla, rojo_max=10, swir1_max=10)["st_c"].notna().sum()
+
+
+def test_episodios_por_punto_une_los_puntos_y_respeta_los_tipos():
+    tabla = _tabla_puntos_sintetica()
+    posiciones = np.flatnonzero((tabla["id"] == "a") & (tabla["fecha"] >= "2022-01-10") & tabla["st_c"].notna())[:4]
+    tabla.loc[tabla.index[posiciones], "st_c"] += 4
+    todo = episodios_por_punto(tabla)
+    assert set(todo["punto"]) <= {"a", "b"} and "nombre" in todo and (todo["punto"] == "a").any()
+    assert list(todo.columns[:3]) == ["punto", "nombre", "tipo"]
+    solo_agua = episodios_por_punto(tabla, tipos=["bahia"])
+    assert set(solo_agua["punto"]) == {"a"} and len(solo_agua) == (todo["punto"] == "a").sum()
+    serie = serie_landsat(tabla, "a")
+    esperado = detectar_episodios(serie, climatologia_ventana(serie), "calor")
+    assert len(solo_agua[solo_agua["tipo"] == "calor"]) == len(esperado)
+    with pytest.raises(ValueError, match="No hay un punto"):
+        serie_landsat(tabla, "no_existe")
+    assert episodios_por_punto(tabla, tipos=["ninguno"]).empty
+
+
+# ---------------------------------------------------------------------------
+# Datos reales de Landsat (archivos del repositorio)
+# ---------------------------------------------------------------------------
+@pytest.fixture(scope="module")
+def tabla_landsat():
+    return cargar_landsat()
+
+
+def test_cargar_landsat_puntos(tabla_landsat):
+    t = tabla_landsat
+    assert t["id"].nunique() == 6 and t["fecha"].min() >= pd.Timestamp("2013-03-01") and t["fecha"].max() >= pd.Timestamp("2026-09-01")
+    assert set(t["plataforma"]) == {"landsat-8", "landsat-9"} and t[t["plataforma"] == "landsat-9"]["fecha"].min() >= pd.Timestamp("2021-10-01")
+    # calibración: st_c es st_dn * 0.00341802 + 149 - 273.15, y no hay temperaturas imposibles
+    con_dato = t.dropna(subset=["st_c"])
+    np.testing.assert_allclose(con_dato["st_dn"] * 0.00341802 + 149.0 - 273.15, con_dato["st_c"], atol=1e-3)
+    assert con_dato["st_c"].between(-43, 67).all() and con_dato["rojo"].dropna().between(0, 1).all()
+    # una fecha con menos de la mitad de la ventana válida no trae valores, pero se conserva
+    poco = t[t["pixeles_validos"] < 0.5]
+    assert len(poco) > 100 and poco["st_c"].isna().all() and poco["ndwi"].isna().all()
+    # el agua es agua (NDWI alto, rojo bajo) y el humedal es vegetación
+    mediana = t.groupby("id")[["ndwi", "ndvi", "rojo", "st_c"]].median()
+    assert (mediana.loc[["bahia_concepcion", "golfo_arauco", "san_vicente"], "ndwi"] > 0.3).all()
+    assert mediana.loc["humedal_rocuant", "ndvi"] > 0.4 and mediana.loc["humedal_rocuant", "ndwi"] < 0
+    assert mediana.loc["humedal_rocuant", "st_c"] > mediana.loc["bahia_concepcion", "st_c"] + 8
+    with pytest.raises(ValueError, match="tipo"):
+        cargar_landsat("otro")
+
+
+def test_serie_landsat_conserva_los_pasos_con_nubes(tabla_landsat):
+    st = serie_landsat(tabla_landsat, "bahia_concepcion")
+    assert st.name == "st_c" and st.index.is_monotonic_increasing and not st.index.duplicated().any()
+    assert 350 < len(st) < 420 and 200 < st.notna().sum() < 260  # unos 6 de cada 10 pasos sin nubes
+    intervalos = st.dropna().index.to_series().diff().dt.days.dropna()
+    assert intervalos.min() >= 8 and intervalos.median() == 16 and intervalos.max() > 100  # revisita de 8 días y huecos largos
+    por_anio = st.groupby(st.index.year).apply(lambda x: x.notna().sum())
+    assert por_anio.loc[2022:2025].min() >= 18 and por_anio.loc[2014:2021].max() <= 18  # Landsat 9 desde 2022
+
+
+def test_control_de_calidad_sobre_los_datos_reales(tabla_landsat):
+    limpia = controlar_calidad_agua(tabla_landsat)
+    descartadas = (tabla_landsat["st_c"].notna() & limpia["st_c"].isna()).groupby(tabla_landsat["id"]).sum()
+    assert descartadas["humedal_rocuant"] == 0 and 40 <= descartadas.sum() <= 60
+    antes = serie_landsat(tabla_landsat, "golfo_arauco")
+    despues = serie_landsat(limpia, "golfo_arauco")
+    assert antes["2025-05-06"] < 0 and np.isnan(despues["2025-05-06"])  # la nube que la máscara no vio (rojo de 0,95)
+    # sin el control, la desviación de las anomalías es mayor
+    a0 = anomalias_observaciones(antes, climatologia_ventana(antes))["anomalia"].std()
+    a1 = anomalias_observaciones(despues, climatologia_ventana(despues))["anomalia"].std()
+    assert a1 < a0 - 0.2
+
+
+def test_climatologia_y_episodios_de_la_bahia(tabla_landsat):
+    st = serie_landsat(controlar_calidad_agua(tabla_landsat), "bahia_concepcion")
+    clima = climatologia_ventana(st)
+    assert clima["n"].min() >= 5 and clima["media"].notna().sum() > 330  # unos pocos días del año pueden quedar sin climatología (menos de 8 observaciones)
+    assert clima["media"].idxmax() < 100 or clima["media"].idxmax() > 330  # máximo en verano austral
+    assert 150 < clima["media"].idxmin() < 260  # mínimo en invierno
+    calor, frio = detectar_episodios(st, clima, "calor"), detectar_episodios(st, clima, "frio")
+    assert (len(calor), len(frio)) == (0, 3)
+    assert list(frio["inicio"]) == [pd.Timestamp("2014-03-05"), pd.Timestamp("2018-09-24"), pd.Timestamp("2026-05-09")] and list(frio["n_obs"]) == [2, 2, 3]
+    assert (frio["duracion"] == [17, 17, 17]).all() and not frio["en_curso"].any()
+
+
+def test_episodios_de_todos_los_puntos_de_agua_y_el_episodio_en_curso(tabla_landsat):
+    ep = episodios_por_punto(controlar_calidad_agua(tabla_landsat), tipos=["bahia", "pluma", "golfo", "laguna"])
+    assert len(ep) == 23 and set(ep["punto"]) == {"bahia_concepcion", "biobio_pluma", "golfo_arauco", "laguna_grande", "san_vicente"}
+    assert ep["n_obs"].between(2, 4).all() and (ep["duracion"] >= 9).all()
+    actual = evento_en_curso(ep)
+    assert actual["punto"] == "golfo_arauco" and actual["tipo"] == "calor" and actual["inicio"] == pd.Timestamp("2026-09-06")
+    assert ep["en_curso"].sum() == 1 and (ep.loc[ep["tipo"] == "calor", "intensidad_max"] > 0).all()
+    assert (ep.loc[ep["tipo"] == "frio", "intensidad_max"] < 0).all()
+    # ningún episodio cruza un hueco de más de 24 días entre observaciones consecutivas
+    for fila in ep.itertuples():
+        serie = serie_landsat(controlar_calidad_agua(tabla_landsat), fila.punto).dropna()
+        dentro = serie[fila.inicio:fila.fin]
+        saltos = dentro.index.to_series().diff().dt.days.dropna()
+        assert len(dentro) == fila.n_obs and (saltos <= 24).all()
+
+
+def test_malla_landsat_real():
+    malla = cargar_landsat("malla")
+    assert malla.dims == ("time", "y", "x") and malla.dtype == np.float32
+    assert malla["time"].to_index().is_monotonic_increasing and malla.sizes["time"] > 250
+    assert malla.sizes["x"] > 100 and malla.sizes["y"] > 100 and float(malla["x"][1] - malla["x"][0]) == 500.0
+    assert float(malla.min()) > -45 and float(malla.max()) < 70  # °C, calibrados
+    verano = malla.sel(time=malla["time"].dt.month.isin([12, 1, 2])).mean("time")
+    # la tierra se calienta más que el mar en verano: el cuantil 90 de la malla supera el 10 por varios grados
+    assert float(verano.quantile(0.9)) - float(verano.quantile(0.1)) > 4
+    clima = climatologia_malla(malla)
+    frec = frecuencia_anomalias_malla(malla, clima, "calor")
+    assert 0.05 < float(frec["fraccion"].median()) < 0.15  # por construcción, cerca del 10 % en el periodo base y alrededores
+

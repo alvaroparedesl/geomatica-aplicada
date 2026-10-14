@@ -88,6 +88,7 @@ Pruebas: `test_carga_offline.py` (ver también `utils/README.md`, sección "Prue
 
 import datetime as dt
 import re
+import time
 import warnings
 from urllib.parse import urlparse
 
@@ -560,6 +561,59 @@ def firmar_url(href):
     if ".blob.core.windows.net" in href:
         href = href.split("?")[0]
     return planetary_computer.sign(href)
+
+
+def items_legibles(items, bandas, trabajadores=32, timeout=60, intentos=3):
+    """
+    Separa los ítems cuyos archivos se pueden leer de los que tienen un archivo dañado.
+
+    Algunos archivos de Planetary Computer no son imágenes: el servidor devuelve una página
+    de error de unos 14 kB en lugar del GeoTIFF (por ejemplo `SR_B3.TIF` y `SR_B4.TIF` de
+    `LC08_L2SP_001086_20221106_02_T1`), y la carga completa falla con "not recognized as
+    being in a supported file format". Esta función pide los 4 primeros bytes de cada
+    archivo y comprueba que sean la firma de un TIFF (`II*\\x00`, `MM\\x00*` o BigTIFF), sin
+    descargar nada más. Los ítems con algún archivo que no lo sea quedan aparte.
+
+    Args:
+        items (iterable): Ítems de Planetary Computer.
+        bandas (iterable): Nombres de los assets que se van a leer, por ejemplo ["red", "lwir11", "qa_pixel"].
+        trabajadores (int): Pedidos en paralelo.
+        timeout (int): Segundos máximos por pedido.
+        intentos (int): Veces que se repite el pedido de un archivo que falla antes de darlo por dañado.
+
+    Returns:
+        tuple: `(legibles, danados)`; `danados` es un diccionario `{id del ítem: [assets dañados]}`.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    import requests
+
+    firmas = (b"II*\x00", b"MM\x00*", b"II+\x00", b"MM\x00+")
+    items = list(items)
+
+    def revisar(par):
+        item, banda = par
+        if banda not in item.assets:
+            return item.id, banda, False
+        for intento in range(intentos):  # un fallo de red pasajero no debe contar como archivo dañado
+            try:
+                with requests.get(firmar_url(item.assets[banda].href), headers={"Range": "bytes=0-3"}, timeout=timeout,
+                                  stream=True) as respuesta:
+                    if next(respuesta.iter_content(4), b"")[:4] in firmas:
+                        return item.id, banda, True
+            except Exception:  # red, firma vencida, etc.: se reintenta
+                pass
+            if intento < intentos - 1:
+                time.sleep(1 + intento)
+        return item.id, banda, False
+
+    with ThreadPoolExecutor(trabajadores) as pool:
+        resultados = list(pool.map(revisar, [(item, banda) for item in items for banda in bandas]))
+    danados = {}
+    for id_, banda, bien in resultados:
+        if not bien:
+            danados.setdefault(id_, []).append(banda)
+    return [item for item in items if item.id not in danados], danados
 
 
 def _dia_solar(item):

@@ -1,51 +1,60 @@
 """
-Eventos extremos de temperatura del mar: olas de calor y de frío marinas.
+Anomalías y eventos extremos de temperatura con series satelitales.
 
-Implementa el método de Hobday et al. (2016), el estándar para olas de calor
-marinas, con pandas y numpy legibles (la idea es que puedas leer el código):
+Este módulo tiene dos partes que responden a dos tipos de serie.
 
-1. `climatologia_hobday`: para cada día del año, la media y los percentiles 90 y
-   10 de un periodo base (1991-2020), juntando los días a +-5 días (ventana de 11)
-   y suavizando con una media móvil de 31 días.
-2. `detectar_eventos`: un día "excede" si supera el p90 (calor) o queda bajo el
-   p10 (frío). Un evento es una racha de excedencias de al menos 5 días. Si dos
-   eventos quedan separados por 2 días o menos, se unen en uno solo. El orden
-   importa: primero se descartan las rachas cortas y después se unen.
-3. `resumen_eventos`, `evento_en_curso`: tablas para contar y describir.
+**A. Series irregulares de Landsat 8 y 9 (la que usa el taller).** Landsat pasa cada 8
+días sobre un punto (con los dos satélites) y las nubes borran muchas fechas, así que la
+serie tiene solo unas decenas de observaciones al año, a intervalos desiguales. No se
+puede aplicar tal cual el método de Hobday (necesita una serie diaria sin huecos y 30
+años de base), pero sí su idea: comparar cada observación con lo normal **para esa época
+del año**.
 
-Vacíos (NaN). Una serie con días sin dato (como OISST en Planetary Computer,
-que no tiene 2024-06-20 a 2026-03-05) **nunca se rellena ni se puentea**: un día
-sin dato no excede el umbral, así que corta cualquier racha, y una unión de
-eventos no puede cruzar un vacío (aunque sea de un solo día). La climatología
-casi no se afecta (usa 30 años de base); lo que no se puede es detectar eventos
-dentro del vacío.
+1. `cargar_landsat`: la tabla de series (temperatura de superficie calibrada, reflectancia
+   e índices por punto y fecha) o la malla de 500 m.
+2. `climatologia_ventana`: para cada día del año, la media y los percentiles de las
+   observaciones del periodo base que caen a +-15 días (se juntan todos los años).
+3. `anomalias_observaciones` y `detectar_episodios`: una observación es anómala si supera
+   el p90 (calor) o queda bajo el p10 (frío); un episodio son varias observaciones
+   válidas seguidas con la misma señal, sin cruzar huecos largos (`brecha_max_dias`).
+   No es un evento de Hobday: la duración es solo una cota mínima.
+4. `aislamiento_forest_observaciones`: Isolation Forest sobre varias variables a la vez
+   (temperatura, reflectancia roja, NDWI...).
+5. `climatologia_malla` y `frecuencia_anomalias_malla`: lo mismo píxel por píxel.
 
-Validación. Con OISST (1981 a 2026, con su vacío) el resultado coincide con
-`xmhw` (https://github.com/coecms/xmhw, implementación de la comunidad Hobday):
-los mismos 88 eventos de calor y 111 de frío, con las mismas fechas de fin y de
-inicio, salvo el primer día de la serie (xmhw no cuenta el 1981-09-01 como inicio).
-Las curvas de umbral y media difieren menos de 0,007 °C (el 29 de febrero y los
-bordes de la ventana se tratan de forma ligeramente distinta). Con `xmhw` el
-frío se pide con `coldSpells=True` y `pctile=90` (él invierte la serie).
-`utils/tests/test_extremos.py` repite la comparación si `xmhw` está instalado
-(`pip install git+https://github.com/coecms/xmhw`; no está en PyPI).
+**B. Series diarias sin huecos (método de Hobday et al. 2016).** Se conserva como método
+de referencia, con pandas y numpy legibles, para series diarias largas (por ejemplo un
+producto diario de temperatura del mar):
 
-Además: `frecuencia_eventos` repite el método en cada píxel de una malla, y
-`aislamiento_forest` marca días atípicos con Isolation Forest (aprendizaje
-automático, sin umbrales) para compararlo con Hobday.
+1. `climatologia_hobday`: media y percentiles 90 y 10 por día del año de un periodo base
+   (1991-2020), juntando los días a +-5 días y suavizando con una media móvil de 31 días.
+2. `detectar_eventos`: un día "excede" si supera el p90 (calor) o queda bajo el p10 (frío).
+   Un evento es una racha de excedencias de al menos 5 días; dos eventos separados por 2
+   días o menos se unen (primero se descartan las rachas cortas y después se unen).
+3. `resumen_eventos`, `evento_en_curso`, `frecuencia_eventos` (una malla), `aislamiento_forest`.
 
-Uso:
+Un día sin dato (NaN) **nunca se rellena ni se puentea**: no excede el umbral, así que corta
+cualquier racha, y una unión de eventos no puede cruzar un vacío. Las pruebas
+(`utils/tests/test_extremos.py`) comparan esta implementación con `xmhw`
+(https://github.com/coecms/xmhw, implementación de la comunidad Hobday; `pip install
+git+https://github.com/coecms/xmhw`, no está en PyPI) sobre una serie sintética, si está instalado.
+Con `xmhw` el frío se pide con `coldSpells=True` y `pctile=90` (él invierte la serie).
 
-    from utils.extremos import (cargar_oisst, climatologia_hobday, detectar_eventos,
-                                resumen_eventos)
-    sst = cargar_oisst()                                  # Serie diaria (con vacíos)
-    clima = climatologia_hobday(sst)                      # media, p90, p10 por día del año
-    olas_calor = detectar_eventos(sst, clima, "calor")
-    olas_frio = detectar_eventos(sst, clima, "frio")
+Uso con Landsat:
+
+    from utils.extremos import (cargar_landsat, serie_landsat, climatologia_ventana,
+                                anomalias_observaciones, detectar_episodios)
+    tabla = cargar_landsat()                              # una fila por punto y fecha
+    st = serie_landsat(tabla, "bahia_concepcion")         # temperatura de superficie, °C
+    clima = climatologia_ventana(st)                      # media, p10, p90 por día del año
+    calor = detectar_episodios(st, clima, "calor")
 """
+
+import warnings
 
 import numpy as np
 import pandas as pd
+import xarray as xr
 
 from .datos_taller import abrir_dato
 
@@ -55,37 +64,60 @@ NOMBRES_CATEGORIA = {1: "I moderada", 2: "II fuerte", 3: "III severa", 4: "IV ex
 # ---------------------------------------------------------------------------
 # Datos
 # ---------------------------------------------------------------------------
-def cargar_oisst(tipo="punto"):
+def cargar_landsat(tipo="puntos"):
     """
-    Carga la temperatura superficial del mar OISST preparada para el taller.
+    Carga los datos de Landsat 8 y 9 preparados para el taller.
 
     Lee de `talleres/fair-series-temporales/datos/` si existe y, si no, de GitHub
-    (ver `utils.datos_taller`). Los días que Planetary Computer no tiene
-    (2024-06-20 a 2026-03-05 y 2026-03-07 y 2026-03-08) quedan como NaN: ni se
-    rellenan ni se eliminan, así el calendario es diario y completo.
+    (ver `utils.datos_taller`). Los datos ya están calibrados: temperatura de
+    superficie en °C y reflectancia de 0 a 1 (ver `utils.raster.convertir_a_temperatura`
+    y `utils.raster.convertir_a_reflectancia`). Las fechas con nubes **no** se
+    rellenan: tienen `pixeles_validos` bajo y las variables en NaN.
 
     Args:
-        tipo (str): "punto" (serie del píxel frente a Concepción, -36.875, -73.375,
-            desde `oisst_concepcion.csv`) o "malla" (24 x 20 píxeles de 0,25
-            grados, 34-40 S y 71-76 O, desde `oisst_centro_sur.nc`).
+        tipo (str): "puntos" (tabla de series de los seis puntos, desde
+            `series_landsat_concepcion.parquet`) o "malla" (temperatura de
+            superficie cada 500 m alrededor de la bahía de Concepción y el golfo de
+            Arauco, desde `landsat_malla_concepcion.nc`).
 
     Returns:
-        pandas.Series o xarray.DataArray: En grados Celsius, con un día por paso
-        de tiempo (índice `fecha`). "punto" da una Serie llamada `sst_c`;
-        "malla" da un DataArray `sst` con dimensiones (time, lat, lon), con NaN en
-        tierra y en los días sin dato.
+        pandas.DataFrame o xarray.DataArray: "puntos" da una tabla con una fila por
+        punto y fecha (columnas `id`, `nombre`, `tipo`, `lat`, `lon`, `fecha`,
+        `plataforma`, `st_dn`, `st_c`, `verde`, `rojo`, `nir`, `swir1`, `ndwi`,
+        `ndvi`, `nubes_escena`, `pixeles_validos`, `n_pixeles`). "malla" da el
+        DataArray `st_c` (°C) con dimensiones (time, y, x) en UTM 18 S (EPSG:32718),
+        con NaN donde hay nubes y solo las fechas con al menos 10 % de píxeles válidos.
     """
-    if tipo == "punto":
-        tabla = pd.read_csv(abrir_dato("oisst_concepcion.csv"), parse_dates=["fecha"], index_col="fecha")
-        return tabla["sst_c"].asfreq("D")
+    if tipo == "puntos":
+        tabla = pd.read_parquet(abrir_dato("series_landsat_concepcion.parquet"))
+        tabla["fecha"] = pd.to_datetime(tabla["fecha"])
+        return tabla
     if tipo == "malla":
-        import xarray as xr
+        with xr.open_dataset(abrir_dato("landsat_malla_concepcion.nc")) as ds:
+            return ds["st_c"].load().astype("float32")
+    raise ValueError(f"tipo debe ser 'puntos' o 'malla', no {tipo!r}.")
 
-        with xr.open_dataset(abrir_dato("oisst_centro_sur.nc")) as ds:
-            sst = ds["sst"].load()
-        dias = pd.date_range(sst.time.values[0], sst.time.values[-1], freq="D")
-        return sst.reindex(time=dias)
-    raise ValueError(f"tipo debe ser 'punto' o 'malla', no {tipo!r}.")
+
+def serie_landsat(tabla, punto, variable="st_c"):
+    """
+    Una variable de un punto como serie de pandas con índice de fechas (a medianoche UTC).
+
+    Las fechas con nubes (menos de la mitad de la ventana válida) quedan como NaN: la
+    serie conserva **todos los pasos del satélite**, así se ven los huecos.
+
+    Args:
+        tabla (pandas.DataFrame): Resultado de `cargar_landsat("puntos")`.
+        punto (str): El `id` del punto, por ejemplo "bahia_concepcion".
+        variable (str): Columna de la tabla: "st_c", "rojo", "ndwi", ...
+
+    Returns:
+        pandas.Series: Llamada como `variable`, ordenada por fecha.
+    """
+    if punto not in set(tabla["id"]):
+        raise ValueError(f"No hay un punto con id {punto!r}: usa uno de {sorted(set(tabla['id']))}.")
+    sub = tabla[tabla["id"] == punto]
+    serie = pd.Series(sub[variable].to_numpy(dtype=float), index=sub["fecha"].dt.normalize(), name=variable)
+    return serie.groupby(level=0).first().sort_index()  # si un día viene repetido, la primera observación que no es NaN
 
 
 # ---------------------------------------------------------------------------
@@ -353,7 +385,7 @@ def frecuencia_eventos(malla, tipo="calor", base=(1991, 2020), periodo=None, **k
 
     Args:
         malla (xarray.DataArray): Temperatura con dimensiones (time, lat, lon),
-            por ejemplo `cargar_oisst("malla")`.
+            por ejemplo una malla diaria de temperatura del mar.
         tipo (str): "calor" o "frio".
         base (tuple): Años del periodo base de la climatología.
         periodo (tuple, optional): Años (inicio, fin), incluidos, en que se cuentan
@@ -464,3 +496,380 @@ def solapamiento(a, b):
     comunes, union = int((a & b).sum()), int((a | b).sum())
     return {"dias_a": int(a.sum()), "dias_b": int(b.sum()), "comunes": comunes,
             "jaccard": comunes / union if union else np.nan}
+
+
+# ---------------------------------------------------------------------------
+# Series irregulares (Landsat 8 y 9): climatología por ventana, anomalías y episodios
+# ---------------------------------------------------------------------------
+def climatologia_ventana(serie, base=(2013, 2024), ventana=31, percentiles=(90, 10), suavizado=15, minimo_obs=8):
+    """
+    Climatología de una serie irregular: media y percentiles por día del año.
+
+    Es la idea de `climatologia_hobday` adaptada a pocas observaciones: para cada uno de
+    los 366 días del año se juntan **las observaciones válidas del periodo base que caen a
+    menos de (`ventana` - 1) / 2 días de ese día, de todos los años**, y se calcula la media
+    y los percentiles. Con Landsat (una pasada cada 8 días, y muchas con nubes) una
+    ventana de 31 días junta de 10 a 30 observaciones; con la de 11 días de Hobday no
+    alcanzan. Después cada curva se suaviza con una media móvil circular.
+
+    Args:
+        serie (pandas.Series): Serie con índice de fechas (puede traer NaN y fechas irregulares).
+        base (tuple): Años de inicio y fin (incluidos) del periodo base. Por defecto
+            2013-2024: los años completos de Landsat 8 (con Landsat 9 desde 2022).
+        ventana (int): Ancho (impar) de la ventana de días, 31 por defecto.
+        percentiles (tuple): Percentiles a calcular. 90 para calor y 10 para frío.
+        suavizado (int o None): Ancho (impar) de la media móvil de suavizado de las curvas
+            (15 por defecto) o None para no suavizar.
+        minimo_obs (int): Observaciones mínimas en la ventana; con menos, ese día del año
+            queda en NaN (no se inventa una climatología).
+
+    Returns:
+        pandas.DataFrame: Índice `dia` (1 a 366, ver `dia_del_anio_366`) y columnas `media`,
+        una por percentil (`p90`, `p10`) y `n` (observaciones juntadas, antes de suavizar).
+    """
+    if ventana % 2 == 0 or (suavizado is not None and suavizado % 2 == 0):
+        raise ValueError("ventana y suavizado deben ser impares.")
+    serie = serie.dropna()
+    serie = serie[(serie.index.year >= base[0]) & (serie.index.year <= base[1])]
+    if serie.empty:
+        raise ValueError(f"La serie no tiene datos entre {base[0]} y {base[1]}.")
+    valores, dia = serie.to_numpy(dtype=float), dia_del_anio_366(serie.index)
+    columnas = {"media": np.full(366, np.nan)}
+    columnas.update({f"p{p}": np.full(366, np.nan) for p in percentiles})
+    cuenta = np.zeros(366, dtype=int)
+    for d in range(1, 367):
+        distancia = (dia - d + 183) % 366 - 183  # distancia circular entre días del año
+        junto = valores[np.abs(distancia) <= ventana // 2]
+        cuenta[d - 1] = junto.size
+        if junto.size < minimo_obs:
+            continue
+        columnas["media"][d - 1] = junto.mean()
+        for p in percentiles:
+            columnas[f"p{p}"][d - 1] = np.percentile(junto, p)
+    if suavizado:
+        columnas = {nombre: _suavizar_con_huecos(curva, suavizado) for nombre, curva in columnas.items()}
+    return pd.DataFrame({**columnas, "n": cuenta}, index=pd.RangeIndex(1, 367, name="dia"))
+
+
+def _suavizar_con_huecos(curva, ancho):
+    """Media móvil circular que ignora los NaN (un día sin climatología no contamina a los vecinos)."""
+    mitad = ancho // 2
+    ampliada = np.concatenate([curva[-mitad:], curva, curva[:mitad]])
+    validos = np.isfinite(ampliada)
+    suma = np.convolve(np.where(validos, ampliada, 0.0), np.ones(ancho), mode="valid")
+    n = np.convolve(validos.astype(float), np.ones(ancho), mode="valid")
+    with np.errstate(invalid="ignore"):
+        suave = suma / n
+    return np.where(np.isfinite(curva), suave, np.nan)  # no se rellenan los días sin climatología
+
+
+def anomalias_observaciones(serie, clima, percentiles=(90, 10)):
+    """
+    Pone al lado de cada observación su media y sus umbrales del día del año, y su anomalía.
+
+    Args:
+        serie (pandas.Series): Serie con índice de fechas (con NaN donde hay nubes).
+        clima (pandas.DataFrame): Resultado de `climatologia_ventana`.
+        percentiles (tuple): (alto, bajo) que existen en `clima`: (90, 10) por defecto.
+
+    Returns:
+        pandas.DataFrame: Mismo índice que `serie`: `valor`, `media`, `p90`, `p10`,
+        `anomalia` (valor menos media), `excede_calor` (sobre el percentil alto) y
+        `excede_frio` (bajo el bajo). Una fecha sin dato no excede nada.
+    """
+    alto, bajo = f"p{percentiles[0]}", f"p{percentiles[1]}"
+    dia = dia_del_anio_366(serie.index)
+    tabla = clima.loc[dia, ["media", alto, bajo]].set_index(serie.index)
+    tabla.insert(0, "valor", serie.to_numpy(dtype=float))
+    tabla["anomalia"] = tabla["valor"] - tabla["media"]
+    with np.errstate(invalid="ignore"):
+        tabla["excede_calor"] = tabla["valor"] > tabla[alto]
+        tabla["excede_frio"] = tabla["valor"] < tabla[bajo]
+    return tabla
+
+
+def detectar_episodios(serie, clima, tipo="calor", min_obs=2, brecha_max_dias=24, columna_umbral=None):
+    """
+    Episodios de observaciones anómalas seguidas en una serie irregular.
+
+    Es la versión "por observaciones" de `detectar_eventos` (Hobday). Un **episodio** es una
+    racha de **al menos `min_obs` observaciones válidas consecutivas** que superan el
+    percentil 90 (calor) o quedan bajo el 10 (frío) de su día del año. Reglas:
+
+    * Las fechas con nubes (NaN) no cuentan como observación: ni cortan ni alargan la racha.
+    * Entre dos observaciones consecutivas del episodio pueden pasar como máximo
+      `brecha_max_dias` días (con 8 días de revisita, 24 es tres pasadas): una racha **no
+      cruza un hueco largo**, porque no sabemos qué pasó ahí.
+    * Una observación válida que no excede (un día normal en medio) corta la racha.
+
+    **No es un evento de Hobday**: no se sabe qué pasó entre dos pasadas, así que la
+    `duracion` (días entre la primera y la última observación del episodio, ambos incluidos)
+    es solo una cota mínima, y no hay unión de brechas ni categorías.
+
+    Args:
+        serie (pandas.Series): Serie con índice de fechas (con NaN donde hay nubes).
+        clima (pandas.DataFrame): Resultado de `climatologia_ventana`.
+        tipo (str): "calor" o "frio".
+        min_obs (int): Observaciones válidas consecutivas mínimas.
+        brecha_max_dias (int): Días máximos entre dos observaciones consecutivas del episodio.
+        columna_umbral (str, optional): Columna de `clima` a usar como umbral ("p90" o "p10" por defecto).
+
+    Returns:
+        pandas.DataFrame: Una fila por episodio: `tipo`, `inicio`, `fin`, `duracion` (días),
+        `n_obs`, `dia_pico`, `intensidad_max` (anomalía del pico, °C; negativa en frío),
+        `intensidad_media` y `en_curso` (True si termina en la última observación válida de
+        la serie). Vacía (sin filas) si no hay episodios.
+    """
+    if tipo not in ("calor", "frio"):
+        raise ValueError("tipo debe ser 'calor' o 'frio'.")
+    columna_umbral = columna_umbral or ("p90" if tipo == "calor" else "p10")
+    serie = serie.dropna()
+    dia = dia_del_anio_366(serie.index)
+    tabla = pd.DataFrame({"valor": serie.to_numpy(dtype=float),
+                          "anomalia": serie.to_numpy(dtype=float) - clima["media"].loc[dia].to_numpy(),
+                          "umbral": clima[columna_umbral].loc[dia].to_numpy()}, index=serie.index)
+    tabla = tabla.dropna(subset=["umbral"])  # un día sin climatología no se puede evaluar: no cuenta como observación normal
+    columnas = ["tipo", "inicio", "fin", "duracion", "n_obs", "dia_pico", "intensidad_max", "intensidad_media", "en_curso"]
+    if tabla.empty:
+        return pd.DataFrame(columns=columnas)
+    with np.errstate(invalid="ignore"):
+        excede = (tabla["valor"] > tabla["umbral"]) if tipo == "calor" else (tabla["valor"] < tabla["umbral"])
+    excede = excede.to_numpy()
+    fechas = tabla.index
+    saltos = np.diff(fechas.to_numpy()).astype("timedelta64[D]").astype(int)
+    filas = []
+    inicio = None
+    for i in range(len(tabla)):
+        sigue = excede[i] and inicio is not None and saltos[i - 1] <= brecha_max_dias
+        if excede[i] and not sigue:
+            inicio = i
+        elif not excede[i]:
+            inicio = None
+        if inicio is not None and (i == len(tabla) - 1 or not (excede[i + 1] and saltos[i] <= brecha_max_dias)):
+            if i - inicio + 1 >= min_obs:
+                tramo = slice(inicio, i + 1)
+                anomalia = tabla["anomalia"].to_numpy()[tramo]
+                pico = inicio + (np.argmax(anomalia) if tipo == "calor" else np.argmin(anomalia))
+                filas.append({
+                    "tipo": tipo, "inicio": fechas[inicio], "fin": fechas[i],
+                    "duracion": (fechas[i] - fechas[inicio]).days + 1, "n_obs": i - inicio + 1,
+                    "dia_pico": fechas[pico], "intensidad_max": tabla["anomalia"].iloc[pico],
+                    "intensidad_media": anomalia.mean(), "en_curso": bool(i == len(tabla) - 1),
+                })
+            inicio = None
+    return pd.DataFrame(filas, columns=columnas)
+
+
+TIPOS_AGUA = ("bahia", "pluma", "golfo", "laguna")
+
+
+def controlar_calidad_agua(tabla, rojo_max=0.05, swir1_max=0.02, tipos=TIPOS_AGUA):
+    """
+    Descarta las observaciones de puntos de agua que la reflectancia delata como nube o neblina.
+
+    La máscara `qa_pixel` de Landsat marca las nubes de confianza alta; una nube delgada o la
+    neblina costera pueden quedar sin marcar y se miden como "agua muy fría" (hasta 10 a 15 °C por
+    debajo de lo normal). Pero el agua abierta tiene una firma clara: reflectancia roja baja (menos de
+    0,05) y SWIR1 casi nula (menos de 0,02). Una observación sobre agua con reflectancia roja
+    mayor que `rojo_max` o con SWIR1 mayor que `swir1_max` es sospechosa y se deja en NaN **en todas
+    sus variables** (la fecha se conserva). Se usa el brillo y no el NDWI: sobre agua oscura la
+    reflectancia NIR es a menudo ligeramente negativa, `convertir_a_reflectancia` la pasa a NaN y el
+    NDWI no se puede calcular (en 17 a 25 % de las observaciones de agua abierta).
+
+    Los puntos de tierra (por ejemplo `humedal`) no se tocan: su reflectancia y su NDWI son otros.
+
+    Args:
+        tabla (pandas.DataFrame): Resultado de `cargar_landsat("puntos")`.
+        rojo_max (float): Reflectancia roja máxima del agua (0 a 1).
+        swir1_max (float): Reflectancia SWIR1 máxima del agua (0 a 1).
+        tipos (iterable): Valores de la columna `tipo` que son agua.
+
+    Returns:
+        pandas.DataFrame: Una copia de `tabla` con las variables en NaN en las observaciones sospechosas.
+    """
+    columnas = ["st_dn", "st_c", "verde", "rojo", "nir", "swir1", "ndwi", "ndvi"]
+    limpia = tabla.copy()
+    sospechosa = limpia["tipo"].isin(tipos) & ((limpia["rojo"] > rojo_max) | (limpia["swir1"] > swir1_max))
+    limpia.loc[sospechosa, columnas] = np.nan
+    return limpia
+
+
+def episodios_por_punto(tabla, variable="st_c", tipos=None, **kwargs):
+    """
+    Episodios cálidos y fríos de cada punto de la tabla, en una sola tabla.
+
+    Para cada punto: `serie_landsat`, `climatologia_ventana` y `detectar_episodios` de calor y de frío.
+
+    Args:
+        tabla (pandas.DataFrame): Resultado de `cargar_landsat("puntos")` (conviene pasarla antes por
+            `controlar_calidad_agua`).
+        variable (str): Variable a analizar, "st_c" por defecto.
+        tipos (iterable, optional): Solo los puntos con estos valores de `tipo`. Por defecto todos.
+        **kwargs: Se pasan a `detectar_episodios` (`min_obs`, `brecha_max_dias`).
+
+    Returns:
+        pandas.DataFrame: Las columnas de `detectar_episodios` más `punto` (el `id`) y `nombre`.
+    """
+    nombres = tabla.drop_duplicates("id").set_index("id")["nombre"]
+    ids = tabla.drop_duplicates("id")
+    if tipos is not None:
+        ids = ids[ids["tipo"].isin(tipos)]
+    partes = []
+    for punto in ids["id"]:
+        serie = serie_landsat(tabla, punto, variable)
+        clima = climatologia_ventana(serie)
+        for tipo in ("calor", "frio"):
+            ev = detectar_episodios(serie, clima, tipo, **kwargs)
+            if not ev.empty:
+                partes.append(ev.assign(punto=punto, nombre=nombres[punto]))
+    columnas = ["punto", "nombre", "tipo", "inicio", "fin", "duracion", "n_obs", "dia_pico", "intensidad_max",
+                "intensidad_media", "en_curso"]
+    todo = pd.concat(partes, ignore_index=True) if partes else pd.DataFrame(columns=columnas)
+    return todo[columnas].sort_values(["punto", "inicio"]).reset_index(drop=True)
+
+
+def aislamiento_forest_observaciones(tabla, columnas, clima_por_variable=None, contaminacion=0.1, arboles=200, semilla=0):
+    """
+    Isolation Forest sobre varias variables de las observaciones válidas de un punto.
+
+    Cada observación se describe con la **anomalía** de cada variable respecto de su
+    climatología (si se pasa `clima_por_variable`) o con el valor tal cual. Es el análisis
+    multivariable que permite Landsat: la temperatura de superficie y la reflectancia
+    medidas **en el mismo instante**. Las fechas con algún NaN no se usan y quedan como no
+    atípicas. No hay umbral ni noción de duración: hay que fijar `contaminacion`, la
+    fracción de observaciones que se espera atípica.
+
+    Args:
+        tabla (pandas.DataFrame): Índice de fechas y una columna por variable (por ejemplo
+            `st_c`, `rojo`, `ndwi`), con NaN donde hay nubes.
+        columnas (list): Variables a usar.
+        clima_por_variable (dict, optional): `{variable: climatología de climatologia_ventana}`.
+            Si se indica, cada variable se reemplaza por su anomalía.
+        contaminacion (float): Fracción esperada de observaciones atípicas (0 a 0,5).
+        arboles (int): Número de árboles del bosque.
+        semilla (int): Semilla aleatoria (resultado reproducible).
+
+    Returns:
+        pandas.DataFrame: Mismo índice que `tabla`, con las variables usadas (o sus anomalías),
+        `puntaje` (menor = más atípico) y `atipico` (bool).
+    """
+    from sklearn.ensemble import IsolationForest
+
+    variables = pd.DataFrame(index=tabla.index)
+    for nombre in columnas:
+        serie = tabla[nombre].astype(float)
+        if clima_por_variable and nombre in clima_por_variable:
+            variables[nombre] = anomalias_observaciones(serie, clima_por_variable[nombre])["anomalia"]
+        else:
+            variables[nombre] = serie
+    completas = variables.dropna()
+    bosque = IsolationForest(n_estimators=arboles, contamination=contaminacion, random_state=semilla)
+    bosque.fit(completas)
+    salida = variables.copy()
+    salida["puntaje"] = np.nan
+    salida.loc[completas.index, "puntaje"] = bosque.score_samples(completas)
+    salida["atipico"] = False
+    salida.loc[completas.index, "atipico"] = bosque.predict(completas) == -1
+    return salida
+
+
+def climatologia_malla(malla, base=(2013, 2024), ventana=31, paso=8, percentiles=(90, 10), minimo_obs=8):
+    """
+    Climatología por ventana de días del año en cada píxel de una malla de observaciones irregulares.
+
+    Como `climatologia_ventana`, pero para todos los píxeles a la vez y evaluada solo cada
+    `paso` días del año (la curva es suave, no hace falta cada día). Los percentiles
+    ignoran los NaN (nubes) de cada píxel por separado.
+
+    Args:
+        malla (xarray.DataArray): Dimensiones (time, y, x), con NaN donde hay nubes.
+        base (tuple): Años de inicio y fin (incluidos) del periodo base.
+        ventana (int): Ancho (impar) de la ventana de días.
+        paso (int): Separación en días del año entre los centros donde se calcula.
+        percentiles (tuple): Percentiles a calcular.
+        minimo_obs (int): Observaciones mínimas por píxel y centro; con menos queda NaN.
+
+    Returns:
+        xarray.Dataset: Dimensiones (centro, y, x) con `media`, `p90`, `p10` y `n`
+        (observaciones válidas). `centro` es el día del año (calendario de 366 días).
+    """
+    tiempo = pd.DatetimeIndex(malla["time"].values)
+    en_base = (tiempo.year >= base[0]) & (tiempo.year <= base[1])
+    datos = malla.isel(time=np.flatnonzero(en_base))
+    dia = dia_del_anio_366(pd.DatetimeIndex(datos["time"].values))
+    valores = datos.to_numpy().astype("float32")
+    centros = np.arange(1, 367, paso)
+    salida = {nombre: np.full((len(centros), *valores.shape[1:]), np.nan, dtype="float32")
+              for nombre in ("media", *[f"p{p}" for p in percentiles])}
+    cuenta = np.zeros((len(centros), *valores.shape[1:]), dtype="int16")
+    for k, centro in enumerate(centros):
+        distancia = (dia - centro + 183) % 366 - 183
+        junto = valores[np.abs(distancia) <= ventana // 2]
+        n = np.isfinite(junto).sum(axis=0)
+        cuenta[k] = n
+        suficiente = n >= minimo_obs
+        with np.errstate(all="ignore"), warnings.catch_warnings():
+            warnings.simplefilter("ignore")  # píxeles sin ninguna observación: "Mean of empty slice"
+            media = np.nanmean(junto, axis=0)
+            percentil = np.nanpercentile(junto, list(percentiles), axis=0)
+        salida["media"][k] = np.where(suficiente, media, np.nan)
+        for j, p in enumerate(percentiles):
+            salida[f"p{p}"][k] = np.where(suficiente, percentil[j], np.nan)
+    coords = {"centro": centros, "y": malla["y"].values, "x": malla["x"].values}
+    return xr.Dataset({nombre: (("centro", "y", "x"), v) for nombre, v in {**salida, "n": cuenta}.items()}, coords=coords)
+
+
+def _centro_mas_cercano(tiempo, centros):
+    """Posición del centro de la climatología más cercano (circular) a cada fecha."""
+    dia = dia_del_anio_366(pd.DatetimeIndex(tiempo))
+    distancia = np.abs((dia[:, None] - np.asarray(centros)[None, :] + 183) % 366 - 183)
+    return distancia.argmin(axis=1)
+
+
+def anomalia_malla(malla, clima):
+    """
+    Anomalía de cada observación de la malla respecto de la media de su píxel y de su época del año.
+
+    Args:
+        malla (xarray.DataArray): Dimensiones (time, y, x).
+        clima (xarray.Dataset): Resultado de `climatologia_malla`.
+
+    Returns:
+        xarray.DataArray: `malla` menos la media climatológica (mismas dimensiones).
+    """
+    posicion = _centro_mas_cercano(malla["time"].values, clima["centro"].values)
+    media = clima["media"].isel(centro=xr.DataArray(posicion, dims="time")).assign_coords(time=malla["time"])
+    return (malla - media).rename("anomalia")
+
+
+def frecuencia_anomalias_malla(malla, clima, tipo="calor", periodo=None):
+    """
+    Fracción de observaciones válidas anómalas (sobre el p90 o bajo el p10) en cada píxel.
+
+    Por construcción, en el periodo base cada píxel tiene cerca del 10 % de observaciones sobre
+    su p90. Un `periodo` distinto (por ejemplo los últimos años) muestra dónde se ha calentado
+    o enfriado más de lo normal: valores muy por encima de 0,10 indican más anomalías que antes.
+
+    Args:
+        malla (xarray.DataArray): Dimensiones (time, y, x).
+        clima (xarray.Dataset): Resultado de `climatologia_malla`.
+        tipo (str): "calor" o "frio".
+        periodo (tuple, optional): Años (inicio, fin), incluidos, en que se cuenta. Por defecto todos.
+
+    Returns:
+        xarray.Dataset: Dimensiones (y, x) con `n_obs` (observaciones válidas con climatología),
+        `n_anomalas` y `fraccion` (NaN donde no hay observaciones).
+    """
+    if tipo not in ("calor", "frio"):
+        raise ValueError("tipo debe ser 'calor' o 'frio'.")
+    tiempo = pd.DatetimeIndex(malla["time"].values)
+    if periodo is not None:
+        malla = malla.isel(time=np.flatnonzero((tiempo.year >= periodo[0]) & (tiempo.year <= periodo[1])))
+    posicion = _centro_mas_cercano(malla["time"].values, clima["centro"].values)
+    umbral = clima["p90" if tipo == "calor" else "p10"].isel(centro=xr.DataArray(posicion, dims="time"))
+    umbral = umbral.assign_coords(time=malla["time"])
+    con_dato = malla.notnull() & umbral.notnull()
+    excede = (malla > umbral) if tipo == "calor" else (malla < umbral)
+    n_obs, n_anomalas = con_dato.sum("time"), (excede & con_dato).sum("time")
+    fraccion = (n_anomalas / n_obs.where(n_obs > 0)).astype("float32")
+    return xr.Dataset({"n_obs": n_obs, "n_anomalas": n_anomalas, "fraccion": fraccion})

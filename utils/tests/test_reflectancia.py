@@ -9,6 +9,8 @@ con cubos sintéticos (DN construidos con un offset conocido por fecha).
 * Si se combinan fechas (por ejemplo `.median("time")`) antes de convertir, el offset
   se pierde: hay un ValueError claro que pide `agregar_offset` o `offset=...`.
 * Landsat no cambia, y las máscaras de calidad SCL funcionan con "SCL" y "scl".
+* Landsat 8/9: `convertir_a_temperatura` (DN a kelvin y a °C, DN 0 y valores imposibles a NaN) y la
+  máscara de saturación `mascara_saturacion_landsat`.
 """
 
 import numpy as np
@@ -166,3 +168,35 @@ def test_enmascarar_conserva_offset_por_fecha():
     limpio = raster.enmascarar_nubes(ds, "sentinel-2")
     assert COORD_OFFSET in limpio.coords
     np.testing.assert_array_equal(limpio[COORD_OFFSET].values, OFFSETS)
+
+
+# ---------------------------------------------------------------------------
+# Landsat 8/9: temperatura de superficie y saturación
+# ---------------------------------------------------------------------------
+def test_temperatura_landsat_calibracion_en_kelvin_y_celsius():
+    dn = xr.DataArray(np.array([[0, 33000, 40000, 65535]], dtype="uint16"))
+    kelvin = raster.convertir_a_temperatura(dn, celsius=False)
+    celsius = raster.convertir_a_temperatura(dn)
+    # K = DN * 0.00341802 + 149
+    assert float(kelvin[0, 1]) == pytest.approx(33000 * 0.00341802 + 149.0)
+    assert float(kelvin[0, 2]) == pytest.approx(285.7208, abs=1e-3)
+    assert float(celsius[0, 2]) == pytest.approx(285.7208 - 273.15, abs=1e-3)
+    assert float(celsius[0, 1]) == pytest.approx(float(kelvin[0, 1]) - 273.15)
+
+
+def test_temperatura_landsat_sin_dato_y_valores_imposibles_son_nan():
+    dn = xr.DataArray(np.array([0, 20000, 40000, 65535], dtype="uint16"))  # 217 K y 373 K están fuera de 230 a 340 K
+    celsius = raster.convertir_a_temperatura(dn)
+    assert np.isnan(celsius.values[[0, 1, 3]]).all() and np.isfinite(celsius.values[2])
+
+
+def test_temperatura_landsat_con_dataset_y_con_dn_float():
+    ds = xr.Dataset({"lwir11": (("y", "x"), np.array([[40000.0, np.nan]]))})
+    c = raster.convertir_a_temperatura(ds)
+    assert float(c["lwir11"][0, 0]) == pytest.approx(12.57, abs=0.01) and np.isnan(float(c["lwir11"][0, 1]))
+
+
+def test_mascara_de_saturacion_landsat():
+    qa = xr.DataArray(np.array([0, 1 << 0, 1 << 6, 1 << 7, 1 << 9, 1 << 11], dtype="uint16"))
+    # los bits 0 a 6 (bandas ópticas) y 11 (terreno) descartan; 7 (sin uso) y 9 (píxel perdido, sin uso en Landsat 8/9) no cuentan
+    assert list(raster.mascara_saturacion_landsat(qa).values) == [True, False, False, True, True, False]

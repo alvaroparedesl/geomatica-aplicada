@@ -456,3 +456,132 @@ def test_mapa_puntos_popup():
     # diccionario id -> html: los puntos que faltan conservan el popup básico
     html = mapa_puntos(puntos, popup={"a": "<b>solo A</b>"}).get_root().render()
     assert "<b>solo A</b>" in html and "id: b" in html and "id: a" not in html
+
+
+# ---------------------------------------------------------------------------
+# Landsat 8/9: construir_series_landsat con ventanas sintéticas (calibración, máscara, huecos)
+# ---------------------------------------------------------------------------
+def _ventana_landsat(punto):
+    """Tres fechas de una ventana de 15 x 15 píxeles de 30 m: limpia, nublada y con la mitad saturada."""
+    n = 15
+    x = X0 + 30 * (np.arange(n) - n // 2) + 0.0
+    y = Y0 - 30 * (np.arange(n) - n // 2) + 0.0
+    forma = (3, n, n)
+    dn_temperatura = np.full(forma, 40000, dtype="uint16")  # 40000 * 0.00341802 + 149 = 285.72 K = 12.57 °C
+    dn_optica = {"green": 20000, "red": 12000, "nir08": 14000, "swir16": 13000}  # reflectancias 0.35, 0.13, 0.185, 0.157
+    qa_pixel = np.full(forma, 21952, dtype="uint16")  # bit de agua (7) y confianza de nube baja, sin bits de nube
+    qa_pixel[1] |= 1 << 3  # fecha 2: nube en toda la ventana
+    qa_radsat = np.zeros(forma, dtype="uint16")
+    qa_radsat[2, : n // 2 + 1] = 1 << 3  # fecha 3: la mitad superior con la banda 4 (roja) saturada
+    ds = xr.Dataset(
+        {nombre: (("time", "y", "x"), np.full(forma, valor, dtype="uint16")) for nombre, valor in dn_optica.items()}
+        | {"lwir11": (("time", "y", "x"), dn_temperatura), "qa_pixel": (("time", "y", "x"), qa_pixel),
+           "qa_radsat": (("time", "y", "x"), qa_radsat)},
+        coords={"time": pd.to_datetime(["2024-01-20T14:40", "2024-01-28T14:40", "2024-02-05T14:40"]), "y": y, "x": x,
+                "plataforma": ("time", ["landsat-9", "landsat-8", "landsat-9"]),
+                "nubes_escena": ("time", [0.1, 80.0, 30.0])})
+    return ds.rio.write_crs(EPSG)
+
+
+def test_construir_series_landsat_calibra_enmascara_y_conserva_las_fechas_nubladas():
+    lon, lat = Transformer.from_crs(EPSG, "EPSG:4326", always_xy=True).transform(X0, Y0)  # el centro de la ventana
+    puntos = pd.DataFrame({"id": ["p"], "nombre": ["Punto"], "lat": [lat], "lon": [lon], "tipo": ["bahia"]})
+    tabla = series.construir_series_landsat({"p": _ventana_landsat(None)}, puntos, radio_m=200, fraccion_minima=0.5)
+    assert list(tabla.columns) == series.COLUMNAS_SERIES_LANDSAT and len(tabla) == 3
+    limpia, nublada, saturada = tabla.iloc[0], tabla.iloc[1], tabla.iloc[2]
+    # calibración: temperatura (K) = DN * 0.00341802 + 149; reflectancia = DN * 0.0000275 - 0.2
+    assert limpia["st_dn"] == 40000 and limpia["st_c"] == pytest.approx(40000 * 0.00341802 + 149.0 - 273.15, abs=1e-4)
+    assert limpia["verde"] == pytest.approx(20000 * 0.0000275 - 0.2, abs=1e-4)
+    assert limpia["rojo"] == pytest.approx(12000 * 0.0000275 - 0.2, abs=1e-4)
+    verde, nir, rojo = 20000 * 0.0000275 - 0.2, 14000 * 0.0000275 - 0.2, 12000 * 0.0000275 - 0.2
+    assert limpia["ndwi"] == pytest.approx((verde - nir) / (verde + nir), abs=1e-4)
+    assert limpia["ndvi"] == pytest.approx((nir - rojo) / (nir + rojo), abs=1e-4)
+    assert limpia["pixeles_validos"] == 1.0 and limpia["plataforma"] == "landsat-9" and limpia["nubes_escena"] == 0.1
+    # nube en toda la ventana: la fecha se conserva, sin valores
+    assert nublada["pixeles_validos"] == 0.0 and np.isnan(nublada[["st_c", "verde", "ndwi"]].astype(float)).all()
+    # la mitad saturada: menos píxeles válidos, y como queda sobre 0,5 se conserva el valor
+    assert 0.3 < saturada["pixeles_validos"] < 0.7
+    assert np.isfinite(saturada["st_c"]) == (saturada["pixeles_validos"] >= 0.5)
+
+
+def test_agregar_atributos_landsat_une_las_escenas_del_mismo_paso():
+    def item(id_, hora, plataforma, nubes):
+        return pystac.Item(id=id_, geometry=None, bbox=None, datetime=pd.Timestamp(hora).to_pydatetime(),
+                           properties={"platform": plataforma, "eo:cloud_cover": nubes})
+
+    items = [item("a1", "2024-01-20T14:40:50", "landsat-9", 10.0), item("a2", "2024-01-20T14:41:14", "landsat-9", 30.0),
+             item("b", "2024-01-28T14:40:40", "landsat-8", 5.0)]
+    datos = xr.Dataset(coords={"time": pd.to_datetime(["2024-01-20T14:41:02", "2024-01-28T14:40:40"])})
+    datos = series.agregar_atributos_landsat(datos, items)
+    assert list(datos["plataforma"].values) == ["landsat-9", "landsat-8"]
+    assert list(datos["nubes_escena"].values) == [20.0, 5.0]
+    with pytest.raises(ValueError, match="Ningún ítem"):
+        series.agregar_atributos_landsat(xr.Dataset(coords={"time": pd.to_datetime(["2020-01-01"])}), items)
+
+
+def test_items_legibles_separa_los_archivos_que_no_son_tiff(monkeypatch):
+    import requests
+
+    def item(id_, **assets):
+        it = pystac.Item(id=id_, geometry=None, bbox=None, datetime=pd.Timestamp("2022-11-06").to_pydatetime(), properties={})
+        for nombre, href in assets.items():
+            it.add_asset(nombre, pystac.Asset(href=href))
+        return it
+
+    class Respuesta:
+        def __init__(self, contenido):
+            self.contenido = contenido
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def iter_content(self, n):
+            yield self.contenido[:n]
+
+    def get(url, headers, timeout, stream):
+        assert headers == {"Range": "bytes=0-3"} and stream
+        return Respuesta(b"<!DO" if "dañado" in url else b"II*\x00")
+
+    monkeypatch.setattr(stac, "firmar_url", lambda href: href)
+    monkeypatch.setattr(stac.time, "sleep", lambda s: None)
+    monkeypatch.setattr(requests, "get", get)
+    bueno = item("bueno", red="https://x/red.tif", lwir11="https://x/lwir.tif")
+    malo = item("malo", red="https://x/dañado/red.tif", lwir11="https://x/lwir.tif")
+    sin_banda = item("sin_banda", red="https://x/red.tif")
+    legibles, danados = stac.items_legibles([bueno, malo, sin_banda], ["red", "lwir11"])
+    assert [i.id for i in legibles] == ["bueno"]
+    assert danados == {"malo": ["red"], "sin_banda": ["lwir11"]}
+
+
+def test_items_legibles_reintenta_un_fallo_pasajero(monkeypatch):
+    import requests
+
+    llamadas = []
+
+    class Respuesta:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def iter_content(self, n):
+            yield b"II*\x00"
+
+    def get(url, headers, timeout, stream):
+        llamadas.append(url)
+        if len(llamadas) == 1:
+            raise requests.ConnectionError("cortado")
+        return Respuesta()
+
+    it = pystac.Item(id="x", geometry=None, bbox=None, datetime=pd.Timestamp("2022-11-06").to_pydatetime(), properties={})
+    it.add_asset("red", pystac.Asset(href="https://x/red.tif"))
+    monkeypatch.setattr(stac, "firmar_url", lambda href: href)
+    monkeypatch.setattr(stac.time, "sleep", lambda s: None)
+    monkeypatch.setattr(requests, "get", get)
+    legibles, danados = stac.items_legibles([it], ["red"], trabajadores=1)
+    assert [i.id for i in legibles] == ["x"] and not danados and len(llamadas) == 2
+

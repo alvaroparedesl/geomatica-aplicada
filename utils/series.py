@@ -513,3 +513,178 @@ def anomalias_zscore(serie, referencia="mes", base=None):
         z = (serie - np.asarray(media, dtype=float)) / np.where(desv > 0, desv, np.nan)
     z.name = f"{serie.name}_z" if serie.name else "z"
     return z
+
+
+# ---------------------------------------------------------------------------
+# Landsat 8 y 9: temperatura de superficie y reflectancia en ventanas alrededor de cada punto
+# ---------------------------------------------------------------------------
+# Bandas de Landsat (nombres genéricos de `utils.raster`) y sus columnas en la tabla de series
+BANDAS_SERIES_LANDSAT = {"green": "verde", "red": "rojo", "nir": "nir", "swir1": "swir1"}
+COLUMNAS_SERIES_LANDSAT = ["id", "nombre", "tipo", "lat", "lon", "fecha", "plataforma", "st_dn", "st_c",
+                           *BANDAS_SERIES_LANDSAT.values(), "ndwi", "ndvi",
+                           "nubes_escena", "pixeles_validos", "n_pixeles"]
+
+
+def agregar_atributos_landsat(datos, items):
+    """
+    Agrega a `datos` las coordenadas `plataforma` y `nubes_escena` (una por fecha).
+
+    Con `groupby="solar_day"` las escenas de un mismo paso del satélite (filas contiguas
+    del mismo camino) quedan en una fecha. Aquí cada fecha toma los ítems cuya hora está a
+    menos de una hora de ella: su plataforma (landsat-8 o landsat-9) y el promedio de su
+    `eo:cloud_cover` (que describe la escena completa, no la ventana).
+
+    Args:
+        datos (xarray.Dataset): Resultado de `odc.stac.load` con `groupby="solar_day"`.
+        items (iterable): Ítems usados en la carga.
+
+    Returns:
+        xarray.Dataset: `datos` con las coordenadas `plataforma` y `nubes_escena`.
+    """
+    horas = np.array([np.datetime64(i.datetime.replace(tzinfo=None), "ns") for i in items])
+    plataformas = np.array([i.properties.get("platform", "") for i in items])
+    nubes = np.array([i.properties.get("eo:cloud_cover", np.nan) for i in items], dtype=float)
+    plataforma, nube = [], []
+    for marca in datos["time"].values.astype("datetime64[ns]"):
+        cerca = np.abs(horas - marca) < np.timedelta64(1, "h")
+        if not cerca.any():
+            raise ValueError(f"Ningún ítem corresponde a la fecha {marca}.")
+        plataforma.append(plataformas[cerca][0])
+        nube.append(float(np.nanmean(nubes[cerca])))
+    datos = datos.assign_coords(plataforma=("time", plataforma), nubes_escena=("time", nube))
+    datos["nubes_escena"].attrs = {"long_name": "nubes de la escena (eo:cloud_cover)", "units": "%"}
+    return datos
+
+
+def cargar_ventanas_landsat(items, puntos, radio_m=200, resolucion=30, crs=None, trabajadores=8,
+                            reintentos=2, verbose=True):
+    """
+    Carga una ventana de Landsat 8/9 alrededor de cada punto, con todas las fechas.
+
+    Es el mismo patrón que `cargar_ventanas` (Sentinel-2): una `odc.stac.load` nativa por
+    punto, perezosa, y una sola lectura en paralelo al final. Las bandas son las ópticas
+    (verde, rojo, NIR, SWIR1), la térmica `lwir11` y las de calidad `qa_pixel` y
+    `qa_radsat`, todas en DN, sin enmascarar ni calibrar: de eso se encarga
+    `construir_series_landsat`.
+
+    Args:
+        items (iterable): Ítems de `landsat-c2-l2` (ver `utils.stac.parametros_busqueda("landsat", ...)`).
+        puntos (pandas.DataFrame): Resultado de `cargar_puntos_csv`.
+        radio_m (float): Radio de la ventana en metros.
+        resolucion (int): Tamaño de píxel en metros (la banda térmica es de 100 m nativos).
+        crs (str, optional): CRS de carga. Por defecto la zona UTM de los puntos (`crs_utm`).
+        trabajadores (int): Lecturas en paralelo.
+        reintentos (int): Veces que se repite la lectura completa si una lectura falla.
+        verbose (bool): Si es True, informa cada punto.
+
+    Returns:
+        dict: `{id del punto: xarray.Dataset}` con dimensiones (time, y, x), bandas en DN y
+        las coordenadas `plataforma` y `nubes_escena`.
+    """
+    import time as reloj
+
+    import dask
+    import odc.stac
+
+    from .raster import nombres_bandas
+    from .stac import parametros_carga
+
+    items = list(items)
+    bandas = [*nombres_bandas("landsat", BANDAS_SERIES_LANDSAT, con_calidad=True), "lwir11", "qa_radsat"]
+    crs = crs or crs_utm(puntos["lon"].mean(), puntos["lat"].mean())
+    perezosas = {}
+    for p in puntos.itertuples():
+        bbox = bbox_punto(p.lon, p.lat, radio_m)
+        items_p = items_de_punto(items, bbox)
+        if not items_p:
+            raise ValueError(f"Ninguna imagen cubre el punto {p.id!r}: revisa la búsqueda o las coordenadas.")
+        parametros = parametros_carga("landsat", bandas, resolucion, crs, "planetary", bbox, chunks=CHUNKS_VENTANA)
+        datos = agregar_atributos_landsat(odc.stac.load(items_p, **parametros), items_p)
+        perezosas[p.id] = datos
+        if verbose:
+            print(f"{p.id}: {len(items_p)} imágenes, {datos.sizes['time']} fechas, ventana de {datos.sizes['x']} x {datos.sizes['y']} píxeles")
+    inicio = reloj.time()
+    for intento in range(reintentos + 1):
+        try:
+            (ventanas,) = dask.compute(perezosas, scheduler="threads", num_workers=trabajadores)
+            break
+        except Exception as error:  # una lectura de red fallida: se repite todo
+            if intento == reintentos:
+                raise
+            print(f"Falló una lectura ({type(error).__name__}); reintento {intento + 1} de {reintentos}.")
+    if verbose:
+        peso = sum(d.nbytes for d in ventanas.values()) / 1e6
+        print(f"Lectura terminada: {peso:.0f} MB en {reloj.time() - inicio:.0f} s.")
+    return ventanas
+
+
+def construir_series_landsat(ventanas, puntos, radio_m=200, estadistico="mediana", fraccion_minima=0.5):
+    """
+    De las ventanas de Landsat a la tabla de series: máscara, calibración, índices y resumen por punto.
+
+    Para cada punto y fecha:
+
+    1. Máscara: descarta (NaN) los píxeles con relleno, nube, sombra, cirrus (`qa_pixel`) o
+       saturación (`qa_radsat`).
+    2. **Calibración** de los números digitales (DN):
+       temperatura = `convertir_a_temperatura` (DN * 0.00341802 + 149 K, a °C) y
+       reflectancia = `convertir_a_reflectancia` (DN * 0.0000275 - 0.2).
+    3. Índices con la reflectancia: NDWI de McFeeters (verde y NIR) y NDVI (NIR y rojo).
+    4. Resumen: el `estadistico` de los píxeles a `radio_m` o menos del punto. `st_dn` es
+       el mismo resumen de la banda térmica **antes** de calibrar (para mostrar el paso).
+    5. `pixeles_validos` es la fracción de esos píxeles que pasó la máscara. Si es menor que
+       `fraccion_minima`, las variables de esa fecha quedan en NaN (la fecha se conserva).
+       Las fechas sin cobertura (la escena no llega a la ventana) se descartan.
+
+    Args:
+        ventanas (dict): Resultado de `cargar_ventanas_landsat`.
+        puntos (pandas.DataFrame): Resultado de `cargar_puntos_csv`.
+        radio_m (float): Radio de la ventana de resumen, en metros.
+        estadistico (str): "mediana" (por defecto), "media", "min" o "max".
+        fraccion_minima (float): Fracción mínima de píxeles válidos (0 a 1).
+
+    Returns:
+        pandas.DataFrame: Una fila por punto y fecha, columnas `COLUMNAS_SERIES_LANDSAT`.
+    """
+    import xarray as xr
+
+    from .raster import (calcular_indices, convertir_a_reflectancia, convertir_a_temperatura, extraer_series_puntos,
+                         lonlat_a_crs, mascara_calidad_landsat, mascara_saturacion_landsat, nombres_bandas)
+
+    nativas = nombres_bandas("landsat", BANDAS_SERIES_LANDSAT)  # green, red, nir08, swir16
+    tablas = []
+    for p in puntos.itertuples():
+        datos = ventanas[p.id]
+        qa_pixel, qa_radsat = datos["qa_pixel"].fillna(1), datos["qa_radsat"].fillna(1)  # sin dato: bit de relleno
+        valida = mascara_calidad_landsat(qa_pixel) & mascara_saturacion_landsat(qa_radsat)
+        cobertura = (qa_pixel.astype("uint16") & 1) == 0                                 # el píxel existe (no es relleno)
+
+        refl = convertir_a_reflectancia(datos[nativas], "landsat").where(valida)
+        temperatura = convertir_a_temperatura(datos["lwir11"]).where(valida)
+        st_dn = datos["lwir11"].where(valida & temperatura.notnull())  # los mismos píxeles que st_c
+        variables = xr.Dataset({"st_c": temperatura, "st_dn": st_dn})
+        for generico, columna in BANDAS_SERIES_LANDSAT.items():
+            variables[columna] = refl[nombres_bandas("landsat", [generico])[0]]
+        indices = calcular_indices(refl, "landsat", ["NDWI_AGUA", "NDVI"])
+        variables["ndwi"], variables["ndvi"] = indices["NDWI_AGUA"], indices["NDVI"]
+        mascaras = xr.Dataset({"valido": valida.astype("float32"), "cobertura": cobertura.astype("float32")})
+
+        x, y = lonlat_a_crs(p.lon, p.lat, datos.rio.crs)
+        un_punto = pd.DataFrame({"id": [p.id], "x": [x], "y": [y]})
+        resumen = extraer_series_puntos(variables, un_punto, "id", radio=radio_m, estadistico=estadistico)
+        fracciones = extraer_series_puntos(mascaras, un_punto, "id", radio=radio_m, estadistico="media")
+
+        columnas = ["st_dn", "st_c", *BANDAS_SERIES_LANDSAT.values(), "ndwi", "ndvi"]
+        ancho = resumen.pivot(index="time", columns="indice", values="valor")[columnas]
+        frac = fracciones.pivot(index="time", columns="indice", values="valor")
+        ancho["pixeles_validos"] = frac["valido"]
+        ancho["n_pixeles"] = fracciones.loc[fracciones["indice"] == "valido"].set_index("time")["n_validos"]
+        ancho["nubes_escena"] = datos["nubes_escena"].to_series()
+        ancho["plataforma"] = datos["plataforma"].to_series()
+        ancho = ancho[frac["cobertura"] > 0.5]
+        ancho.loc[ancho["pixeles_validos"] < fraccion_minima, columnas] = np.nan
+        ancho.index.name = "fecha"
+        tablas.append(ancho.reset_index().assign(id=p.id))
+
+    tabla = pd.concat(tablas, ignore_index=True).merge(puntos[["id", "nombre", "tipo", "lat", "lon"]], on="id")
+    return tabla[COLUMNAS_SERIES_LANDSAT].sort_values(["id", "fecha"]).reset_index(drop=True)

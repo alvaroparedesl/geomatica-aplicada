@@ -37,6 +37,6 @@ repos:
       - id: detect-private-key
       - id: check-added-large-files
         args: [--maxkb=1024]
-        # Los datos preparados de los talleres (por ejemplo la malla OISST de
-        # ~6 MB) se versionan a propósito para que Colab no dependa de descargas.
+        # Los datos preparados de los talleres (por ejemplo la malla de Landsat)
+        # se versionan a propósito para que Colab no dependa de descargas.
         exclude: ^talleres/[^/]+/datos/

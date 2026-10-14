@@ -223,6 +223,26 @@ def mascara_calidad_landsat(qa_pixel, excluir=None):
     return valida
 
 
+# QA_RADSAT de Landsat 8/9: bits 0 a 6 (saturación de las bandas 1 a 7) y 11 (terreno que tapa el píxel).
+# La banda térmica no tiene bit de saturación en Collection 2 (el bit 9 es "píxel perdido", sin uso en Landsat 8 y 9).
+BITS_SATURACION_LANDSAT = (0, 1, 2, 3, 4, 5, 6, 11)
+
+
+def mascara_saturacion_landsat(qa_radsat):
+    """
+    Máscara de píxeles sin saturación radiométrica, a partir de la banda QA_RADSAT de Landsat 8/9.
+
+    Descarta los píxeles donde alguna banda óptica (1 a 7) se saturó, o donde el relieve tapa
+    el píxel. Sobre el agua y la tierra de la zona de estudio casi
+    nunca ocurre, pero es parte de una calibración honesta.
+
+    Returns:
+        xarray.DataArray (bool): True donde no hay saturación.
+    """
+    bits = sum(1 << bit for bit in BITS_SATURACION_LANDSAT)
+    return (qa_radsat.astype("uint16") & bits) == 0
+
+
 def mascara_calidad_sentinel2(scl, excluir=None):
     """
     Máscara de píxeles válidos a partir de la banda SCL de Sentinel-2.
@@ -290,6 +310,44 @@ def preparar_reflectancia(imagen, sensor, enmascarar=True, excluir=None):
     if enmascarar:
         imagen = enmascarar_nubes(imagen, sensor, excluir)
     return convertir_a_reflectancia(imagen, sensor)
+
+
+# ---------------------------------------------------------------------------
+# Temperatura de superficie (Landsat Collection 2 Level-2, banda térmica lwir11 / ST_B10)
+# ---------------------------------------------------------------------------
+# Landsat 8/9 guardan la temperatura de superficie como número entero (DN):
+#   temperatura (K) = DN * 0.00341802 + 149.0   (DN = 0 es "sin dato")
+# Es la misma idea que la reflectancia (DN * factor + offset), con otro factor y otro offset.
+FACTOR_TEMPERATURA_LANDSAT = 0.00341802
+OFFSET_TEMPERATURA_LANDSAT = 149.0
+KELVIN_A_CELSIUS = 273.15
+RANGO_TEMPERATURA_K = (230.0, 340.0)  # fuera de este rango (-43 a 67 °C) el valor es un error, no una temperatura
+
+
+def convertir_a_temperatura(imagen, celsius=True):
+    """
+    Convierte la banda térmica de Landsat (`lwir11`, en DN) a temperatura de superficie.
+
+    Calibración: kelvin = DN * 0.00341802 + 149.0; luego, si `celsius`, se resta 273.15.
+    Los píxeles sin dato (DN = 0) y los valores fuera de 230 a 340 K pasan a NaN.
+
+    Es **temperatura de la superficie** (suelo, agua, copas), no del aire. Sobre el agua
+    mide la temperatura de la **piel** (no la del agua en profundidad), con errores de
+    alrededor de 1 K o más que crecen con la humedad atmosférica y las nubes delgadas: no es
+    un producto oceanográfico. Resolución nativa de la banda: 100 m (el USGS la entrega
+    remuestreada a 30 m).
+
+    Args:
+        imagen (xarray.DataArray o xarray.Dataset): La banda `lwir11` en DN.
+        celsius (bool): Si es True (por defecto) devuelve °C; si es False, kelvin.
+
+    Returns:
+        Mismo tipo que `imagen`, con la temperatura.
+    """
+    kelvin = imagen.where(imagen != 0) * FACTOR_TEMPERATURA_LANDSAT + OFFSET_TEMPERATURA_LANDSAT
+    minimo, maximo = RANGO_TEMPERATURA_K
+    kelvin = kelvin.where((kelvin >= minimo) & (kelvin <= maximo))
+    return kelvin - KELVIN_A_CELSIUS if celsius else kelvin
 
 
 # ---------------------------------------------------------------------------

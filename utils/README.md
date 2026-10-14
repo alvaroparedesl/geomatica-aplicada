@@ -110,6 +110,7 @@ guardarla y `herramientas`/`usar` siguen funcionando.
 | `offset_sentinel2(item)` | Offset de reflectancia correcto de un ítem Sentinel-2 (0 o -0.1) |
 | `quitar_duplicados(items)` | Deja una sola versión (la más nueva) de cada toma Sentinel-2 |
 | `escala_y_offset(item, banda)` | Factor y offset para pasar de DN a reflectancia |
+| `items_legibles(items, bandas)` | Separa los ítems con algún archivo dañado (Planetary Computer devuelve una página de error en vez del GeoTIFF) de los legibles |
 
 ### `utils/raster.py`
 | Función | Qué hace |
@@ -117,7 +118,9 @@ guardarla y `herramientas`/`usar` siguen funcionando.
 | `SENSORES`, `obtener_configuracion_sensor(sensor)` | Bandas, factores y colección de "landsat" y "sentinel-2" |
 | `nombres_bandas(sensor, nombres, con_calidad)` | "nir" → `nir08` (Landsat) o `B08` (Sentinel-2) |
 | `convertir_a_reflectancia(imagen, sensor, offset)` | DN * factor + offset (offset por fecha en Sentinel-2); DN 0 y valores fuera de 0 a 1 pasan a NaN |
+| `convertir_a_temperatura(imagen, celsius)` | Banda térmica `lwir11` de Landsat 8/9: K = DN * 0.00341802 + 149, luego °C; DN 0 y valores fuera de 230 a 340 K pasan a NaN |
 | `mascara_calidad_landsat(qa_pixel, excluir)` | Máscara True=válido desde QA_PIXEL (`BITS_LANDSAT`) |
+| `mascara_saturacion_landsat(qa_radsat)` | Máscara True=sin saturación (bandas ópticas 1 a 7 y terreno que tapa el píxel) desde QA_RADSAT |
 | `mascara_calidad_sentinel2(scl, excluir)` | Máscara True=válido desde SCL (`CLASES_SCL`) |
 | `enmascarar_nubes(imagen, sensor, excluir)` | Pone NaN en nubes/sombras/relleno |
 | `preparar_reflectancia(imagen, sensor, enmascarar)` | Atajo: enmascara + convierte |
@@ -184,18 +187,30 @@ La tabla de series tiene una fila por punto y fecha, con `id, nombre, tipo, lat,
 lon, fecha, ndwi, ndci, b04, ndvi, nubes_escena, pixeles_validos, n_pixeles,
 offset_reflectancia`. Con un solo año de datos la climatología mensual tiene pocas
 observaciones por mes: sirve para ver el ciclo, no para anomalías robustas
-(para eso, la serie larga de OISST).
+(para eso, la serie larga de Landsat 8 y 9 de `cargar_landsat`).
 
-### `utils/extremos.py` (olas de calor y de frío marinas)
-Método de Hobday et al. (2016) en pandas legible; validado contra `xmhw` (ver el
-docstring del módulo). Un vacío (NaN) nunca se rellena ni se puentea.
+### `utils/series.py`: Landsat 8 y 9
+| Función | Qué hace |
+|---|---|
+| `cargar_ventanas_landsat(items, puntos, radio_m, resolucion)` | Una ventana de Landsat alrededor de cada punto con todas las fechas (verde, rojo, NIR, SWIR1, `lwir11`, `qa_pixel`, `qa_radsat`, en DN). Mismo patrón que `cargar_ventanas` |
+| `construir_series_landsat(ventanas, puntos, radio_m, fraccion_minima)` | Máscara, **calibración** (temperatura y reflectancia), NDWI y NDVI, y mediana de la ventana. Una fila por punto y fecha; las fechas con nubes se conservan con NaN |
+| `agregar_atributos_landsat(datos, items)` | Agrega la plataforma (landsat-8 o landsat-9) y las nubes de la escena a cada fecha |
+
+### `utils/extremos.py` (anomalías y eventos extremos de temperatura)
+Dos partes. **Landsat 8 y 9** (series irregulares: un paso cada 8 días, con nubes): climatología por ventana de días, anomalías y *episodios* de observaciones seguidas (no son eventos de Hobday). **Hobday** (series diarias sin huecos), validado contra `xmhw` (ver el docstring del módulo). Un vacío (NaN) nunca se rellena ni se puentea.
 
 | Función | Qué hace |
 |---|---|
-| `cargar_oisst(tipo)` | OISST del taller: `"punto"` (Serie diaria frente a Concepción) o `"malla"` (DataArray 24 x 20). Con los días sin dato como NaN |
-| `climatologia_hobday(serie, base, ventana, percentiles, suavizado)` | Media, p90 y p10 por día del año (1991-2020, ventana de 11 días, suavizado de 31) |
+| `cargar_landsat(tipo)` | Datos de Landsat del taller: `"puntos"` (tabla por punto y fecha, calibrada, con las fechas nubladas como NaN) o `"malla"` (DataArray de temperatura cada 500 m) |
+| `serie_landsat(tabla, punto, variable)` | Una variable de un punto como Serie con índice de fechas |
+| `climatologia_ventana(serie, base, ventana, percentiles, suavizado, minimo_obs)` | Media, p90, p10 y `n` por día del año, juntando las observaciones a +-15 días de todos los años de la base (2013-2024) |
+| `anomalias_observaciones(serie, clima)` | Cada observación con su media, umbrales, anomalía y marcas de calor y frío |
+| `detectar_episodios(serie, clima, tipo, min_obs, brecha_max_dias)` | Tabla de episodios: al menos 2 observaciones válidas seguidas sobre el p90 (o bajo el p10), sin cruzar huecos de más de 24 días. La duración es una cota mínima |
+| `aislamiento_forest_observaciones(tabla, columnas, clima_por_variable, contaminacion)` | Isolation Forest sobre varias variables (temperatura, reflectancia...) de las observaciones válidas |
+| `climatologia_malla(malla, base, ventana, paso)`, `anomalia_malla`, `frecuencia_anomalias_malla` | Lo mismo píxel por píxel: climatología, anomalía y fracción de observaciones anómalas |
+| `climatologia_hobday(serie, base, ventana, percentiles, suavizado)` | Hobday: media, p90 y p10 por día del año (1991-2020, ventana de 11 días, suavizado de 31) para una serie **diaria** |
 | `aplicar_climatologia(serie, clima)`, `dia_del_anio_366(indice)` | La climatología alineada con la serie; calendario de 366 días |
-| `detectar_eventos(serie, clima, tipo, duracion_min, brecha_max)` | Tabla de eventos de `"calor"` o `"frio"`: rachas de al menos 5 días y unión de brechas de 2 días o menos (primero filtrar, después unir). Duración, intensidad, día del pico, categoría y `en_curso` |
+| `detectar_eventos(serie, clima, tipo, duracion_min, brecha_max)` | Hobday: tabla de eventos de `"calor"` o `"frio"`: rachas de al menos 5 días y unión de brechas de 2 días o menos (primero filtrar, después unir). Duración, intensidad, día del pico, categoría y `en_curso` |
 | `resumen_eventos(eventos, por)`, `evento_en_curso(eventos)` | Conteos por década o año; el evento activo en el último día |
 | `marcar_dias_evento(serie, eventos)`, `solapamiento(a, b)` | Días dentro de eventos (booleana) y comparación entre dos marcas (Jaccard) |
 | `frecuencia_eventos(malla, tipo, base, periodo)` | Eventos por píxel de una malla: `n_eventos`, `dias_en_evento`, `eventos_por_decada` |
@@ -298,10 +313,10 @@ reales grabados, así que la regla del offset se prueba sin conexión:
 | `test_pixeles_reales.py` | Con píxeles reales, la reflectancia coincide entre catálogos (sesgo < 0.005, un error de offset da 0.1), el agua oscura no queda negativa, y un offset equivocado se detecta |
 | `test_busqueda_offline.py` | `parametros_busqueda`, elección de catálogo (`earthsearch` es c1, `earthsearch-l2a` desactivado, Landsat solo en Planetary Computer), aviso del hueco de c1 y `preparar_items` |
 | `test_carga_offline.py` | `parametros_carga`, `groupby`, `renombrar_bandas` y `agregar_offset` con `odc.stac.load` real sobre archivos locales; dedupe, catálogos mezclados, offsets distintos en un mismo día |
-| `test_reflectancia.py` | `convertir_a_reflectancia` con cubos sintéticos: offset por fecha, DN 0 a NaN, error al combinar fechas antes de convertir |
+| `test_reflectancia.py` | `convertir_a_reflectancia` con cubos sintéticos: offset por fecha, DN 0 a NaN, error al combinar fechas antes de convertir; `convertir_a_temperatura` de Landsat (DN a K y a °C) y la máscara de saturación |
 | `test_general.py` | Vectorial, raster y gráficos con datos sintéticos |
-| `test_series.py` | Puntos, `extraer_series_puntos` con ventana, el flujo Sentinel-2 completo (`cargar_ventanas` + `construir_series`) con GeoTIFF locales y offsets por fecha, análisis de series, parquet, la serie preparada del taller y los gráficos (folium, hvplot) |
-| `test_extremos.py` | Hobday con series sintéticas (racha de 5 y de 4 días, brechas de 2 y 3, filtrar antes de unir, vacíos que no se puentean, frío, 29 de febrero, evento en curso), los conteos reales de OISST, comparación con `xmhw` (si está instalado), malla e Isolation Forest |
+| `test_series.py` | Puntos, `extraer_series_puntos` con ventana, el flujo Sentinel-2 completo (`cargar_ventanas` + `construir_series`) con GeoTIFF locales y offsets por fecha, `construir_series_landsat` con ventanas sintéticas (calibración, máscara, fechas nubladas), `items_legibles` (archivos dañados), análisis de series, parquet, la serie preparada del taller y los gráficos (folium, hvplot) |
+| `test_extremos.py` | Hobday con series sintéticas (racha de 5 y de 4 días, brechas de 2 y 3, filtrar antes de unir, vacíos que no se puentean, frío, 29 de febrero, evento en curso), comparación con `xmhw` (si está instalado), malla diaria e Isolation Forest. Landsat: climatología por ventana, episodios (racha de observaciones, nubes que no cortan, brecha máxima), control de calidad con la reflectancia, malla de 500 m y los datos reales preparados del taller (calibración, huecos, episodios de referencia) |
 | `test_ia.py` | Cliente MCP con un servidor falso por stdio y un "LLM" guionizado (sin internet ni clave); la parte con servidores reales lleva la marca `red` |
 | `test_red_catalogos.py` | (marca `red`, con internet) La misma toma en los catálogos reales, comparada entre sí y con Landsat; serie que cruza el cambio de baseline; flujo nativo completo; hueco de c1 |
 
