@@ -73,9 +73,8 @@ import rasterio
 from pystac_client import Client
 
 # Funciones de apoyo del curso (carpeta utils/)
-from utils.raster import convertir_a_reflectancia
 from utils.series import bbox_punto, bbox_puntos, cargar_puntos_csv, crs_utm
-from utils.stac import (agregar_offset, conectar_catalogo, offset_sentinel2, parametros_busqueda, parametros_carga,
+from utils.stac import (conectar_catalogo, offset_sentinel2, parametros_busqueda, parametros_carga,
                         preparar_items, quitar_duplicados, resumir_imagenes)
 from utils.viz import mapa_puntos
 
@@ -348,7 +347,7 @@ cambio
 #
 # ### ¿Y si aplico un valor fijo?
 #
-# Veamos qué pasa con **agua**, donde la reflectancia es muy baja y un error de 0.1 se nota más. Cargamos una ventana de unos 600 x 600 m en la Bahía de Concepción para cuatro fechas de ese período, con el patrón nativo: `parametros_carga` + `odc.stac.load` + `agregar_offset` (los detalles de la carga son del bloque 3).
+# Veamos qué pasa con **agua**, donde la reflectancia es muy baja y un error de 0.1 se nota más. Cargamos una ventana de unos 600 x 600 m en la Bahía de Concepción para cuatro fechas de ese período, con el patrón nativo: `parametros_carga` + `odc.stac.load` (los detalles de la carga son del bloque 3). El offset de cada fecha lo da `offset_sentinel2` a partir del baseline de cada imagen.
 
 # %%
 bahia = puntos.set_index("id").loc["bahia_concepcion"]
@@ -360,27 +359,23 @@ items_ventana = preparar_items(catalogo.search(**parametros_2022b).item_collecti
 datos = odc.stac.load(items_ventana, **parametros_carga("sentinel-2", ["B04"], resolucion=10,
                                                          crs=crs_utm(float(bahia.lon), float(bahia.lat)),
                                                          catalogo=catalogo, bbox=ventana))
-datos = agregar_offset(datos, items_ventana)  # el offset correcto de cada fecha
 
 dn_mediano = datos["B04"].median(["x", "y"])  # DN mediano de la ventana, por fecha
+imagenes = sorted(items_ventana, key=lambda i: i.datetime)  # en el mismo orden que las fechas de `datos`
 comparacion = pd.DataFrame({
     "fecha": pd.to_datetime(datos.time.values).strftime("%Y-%m-%d"),
-    "baseline": [i.properties["s2:processing_baseline"] for i in sorted(items_ventana, key=lambda i: i.datetime)],
+    "baseline": [i.properties["s2:processing_baseline"] for i in imagenes],
     "DN B04 (mediana)": dn_mediano.values,
-    "offset correcto": datos.offset_reflectancia.values,
+    "offset correcto": [offset_sentinel2(i) for i in imagenes],  # según el baseline de cada imagen
 })
 comparacion["reflectancia correcta"] = dn_mediano.values * 0.0001 + comparacion["offset correcto"]
 comparacion["con -0.1 fijo"] = dn_mediano.values * 0.0001 - 0.1
 comparacion.round(4)
 
 # %% [markdown]
-# El agua de la bahía es la misma, pero el **DN salta** de unas decenas o centenas (baseline `03.00`) a más de 1.100 (baseline `04.00` y posteriores): son los 1000 que se sumaron. Con el offset de cada fecha la reflectancia roja del agua queda coherente (entre 0.004 y 0.034, típica de agua oscura). Con un `-0.1` fijo, las dos fechas anteriores a `04.00` darían **reflectancias negativas** (imposibles, y la función de conversión las pondría en `NaN`).
+# El agua de la bahía es la misma, pero el **DN salta** de unas decenas o centenas (baseline `03.00`) a más de 1.100 (baseline `04.00` y posteriores): son los 1000 que se sumaron. Con el offset de cada fecha la reflectancia roja del agua queda coherente (entre 0.004 y 0.034, típica de agua oscura). Con un `-0.1` fijo, las dos fechas anteriores a `04.00` darían **reflectancias negativas** (imposibles, y quedarían en `NaN` al convertir).
 #
-# La conversión del curso usa el offset de cada fecha automáticamente:
-
-# %%
-reflectancia = convertir_a_reflectancia(datos[["B04"]], "sentinel-2")  # usa la coordenada offset_reflectancia
-reflectancia["B04"].median(["x", "y"]).to_series().round(4)
+# En el bloque 3 aplicarás esta misma fórmula, `DN * 0,0001 + offset`, a una imagen completa.
 
 # %% [markdown]
 # **Por qué nunca fijamos un valor a mano**
@@ -394,7 +389,7 @@ reflectancia["B04"].median(["x", "y"]).to_series().round(4)
 # | Planetary Computer (por defecto) | `sentinel-2-l2a` | `0` si baseline `< 04.00`; `-0.1` si `>= 04.00` |
 # | Earth Search (AWS) | `sentinel-2-c1-l2a` | siempre `-0.1` |
 #
-# Los helpers del curso (`offset_sentinel2`, `agregar_offset`, `convertir_a_reflectancia`) aplican esta regla por imagen, y tienen pruebas automáticas con metadatos y píxeles reales de la zona. **Los cuadernos antiguos con un offset fijo no deben copiarse.** La explicación completa está en `help(utils.stac)`.
+# El helper del curso `offset_sentinel2` aplica esta regla por imagen, y tiene pruebas automáticas con metadatos y píxeles reales de la zona. **Los cuadernos antiguos con un offset fijo no deben copiarse.** La explicación completa está en `help(utils.stac)`.
 
 # %% [markdown]
 # ## 7. Un caso de enseñanza: la escena con archivos sin CRS
