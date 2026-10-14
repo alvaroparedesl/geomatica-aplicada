@@ -19,7 +19,6 @@ import plotly.graph_objects as go
 from matplotlib.lines import Line2D
 from plotly.subplots import make_subplots
 
-from .raster import extraer_series_puntos
 from .series import rolling_media
 
 # Nombre, longitud de onda y color de cada banda (Sentinel-2 y Landsat)
@@ -417,6 +416,8 @@ def graficar_series_puntos(datos, coordenadas, variables=("NDVI",), mostrar=True
         variables (iterable): Variables a graficar (deben existir en `datos`).
         mostrar (bool): Si es False, devuelve la figura en vez de mostrarla.
     """
+    from .raster import extraer_series_puntos  # aquí y no arriba: raster necesita rioxarray, y el resto de viz no
+
     puntos = pd.DataFrame(coordenadas, columns=["x", "y"])
     puntos["punto_id"] = [f"Punto {i + 1}" for i in range(len(puntos))]
     serie = extraer_series_puntos(datos[list(variables)], puntos)

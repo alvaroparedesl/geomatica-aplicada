@@ -601,3 +601,16 @@ def test_items_legibles_reintenta_un_fallo_pasajero(monkeypatch):
     legibles, danados = stac.items_legibles([it], ["red"], trabajadores=1)
     assert [i.id for i in legibles] == ["x"] and not danados and len(llamadas) == 2
 
+
+
+def test_viz_se_importa_sin_rioxarray():
+    # El cuaderno 06 de Colab solo instala hvplot: `utils.viz` no debe exigir rioxarray (lo usa utils.raster).
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    codigo = ("import sys; sys.modules['rioxarray'] = None\n"
+              f"sys.path.insert(0, {str(Path(__file__).resolve().parents[2])!r})\n"
+              "from utils.viz import mapa_puntos, serie_interactiva")
+    resultado = subprocess.run([sys.executable, "-c", codigo], capture_output=True, text=True)
+    assert resultado.returncode == 0, resultado.stderr[-500:]
