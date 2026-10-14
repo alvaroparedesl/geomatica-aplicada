@@ -41,17 +41,18 @@ if "google.colab" in sys.modules:  # Colab: clonar el repositorio (y actualizarl
 else:  # Local: subir desde la carpeta actual hasta encontrar utils/
     RAIZ = next(p for p in [Path.cwd(), *Path.cwd().parents] if (p / "utils").is_dir())
 sys.path.insert(0, str(RAIZ))
+DATOS = RAIZ / "talleres" / "fair-series-temporales" / "datos"  # carpeta con los archivos de datos del taller
 
 # %%
 # @title Importar bibliotecas
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import pyarrow.parquet as pq
 
 # Funciones de apoyo del curso (carpeta utils/)
-from utils.extremos import cargar_landsat, controlar_calidad_agua, serie_landsat
-from utils.series import (anomalias_zscore, cargar_series, climatologia_mensual, leer_metadatos_series, resumen_validez,
-                          rolling_media, serie_de_punto, tendencia_lineal)
+from utils.extremos import controlar_calidad_agua
+from utils.series import anomalias_zscore, resumen_validez, tendencia_lineal
 
 # Una paleta que se distingue bien con daltonismo (Okabe-Ito), un color por punto
 PALETA = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9"]
@@ -61,11 +62,13 @@ ETIQUETAS = {"ndwi": "NDWI (agua)", "ndci": "NDCI (clorofila)", "b04": "B04, ref
 # %% [markdown]
 # ## 1. Cargar el parquet y sus metadatos
 #
-# Usamos `series_sentinel2_concepcion.parquet`, la serie de 12 meses preparada con el mismo flujo del bloque 4 (si guardaste tu propio parquet de tres meses, puedes cargarlo igual con `cargar_series("mi_serie_sentinel2.parquet")`, pero los resultados de este cuaderno hablan de los 12 meses). Primero lo que el archivo dice de sí mismo:
+# Usamos `series_sentinel2_concepcion.parquet`, la serie de 12 meses preparada con el mismo flujo del bloque 4 (si guardaste tu propio parquet de tres meses, puedes cargarlo igual con `pd.read_parquet` y la ruta de tu archivo, pero los resultados de este cuaderno hablan de los 12 meses). Primero lo que el archivo dice de sí mismo:
 
 # %%
-tabla = cargar_series("series_sentinel2_concepcion.parquet")
-metadatos = leer_metadatos_series("series_sentinel2_concepcion.parquet")
+ruta = DATOS / "series_sentinel2_concepcion.parquet"
+tabla = pd.read_parquet(ruta)
+# Los metadatos viajan dentro del archivo, como bytes (la clave "pandas" es de pandas y no nos interesa)
+metadatos = {k.decode(): v.decode() for k, v in pq.read_schema(ruta).metadata.items() if k != b"pandas"}
 print(metadatos["titulo"])
 print("Fuente:", metadatos["fuente"])
 print("Licencia:", metadatos["licencia"])
@@ -73,13 +76,13 @@ print(f"\n{len(tabla)} filas, {tabla['id'].nunique()} puntos, {tabla['fecha'].mi
 tabla.head(3)
 
 # %% [markdown]
-# Recuerda que en cada punto hay fechas en las que **la ventana estaba tapada** y los índices son NaN: las fechas se conservan para que se vea el vacío. `resumen_validez` cuenta cuántas sirven. Casi todo este bloque trabaja con una serie por punto y variable: `serie_de_punto` la devuelve como `pandas.Series` con índice de fechas y **sin los NaN**.
+# Recuerda que en cada punto hay fechas en las que **la ventana estaba tapada** y los índices son NaN: las fechas se conservan para que se vea el vacío. `resumen_validez` cuenta cuántas sirven. Casi todo este bloque trabaja con una serie por punto y variable. La sacamos de la tabla filtrando por punto, usando la fecha como índice y quitando los NaN: queda una `pandas.Series` con índice de fechas y **sin los NaN**.
 
 # %%
 resumen_validez(tabla)[["nombre", "fechas", "fechas_validas", "porcentaje_valido", "pixeles_validos_medio"]]
 
 # %%
-pluma_b04 = serie_de_punto(tabla, "biobio_pluma", "b04")
+pluma_b04 = tabla[tabla["id"] == "biobio_pluma"].set_index("fecha")["b04"].dropna()
 print(type(pluma_b04).__name__, len(pluma_b04), "valores")
 pluma_b04.head(4)
 
@@ -141,12 +144,12 @@ cuenta
 # %% [markdown]
 # En junio, julio y agosto hay la mitad de fechas que en verano, y bastantes de ellas con la ventana tapada. Eso afecta a **todo** lo que calculemos: un promedio de invierno se apoya en muy pocos datos.
 #
-# La **media móvil** suaviza el ruido para ver el comportamiento de fondo. `rolling_media` acepta una ventana en **días** (`"30D"`, adecuada para fechas irregulares) o en **observaciones** (un número entero). Compara las dos en la turbidez de la pluma del Biobío:
+# La **media móvil** suaviza el ruido para ver el comportamiento de fondo. `rolling` de pandas acepta una ventana en **días** (`"30D"`, adecuada para fechas irregulares) o en **observaciones** (un número entero); `min_periods` es el mínimo de observaciones que debe haber en la ventana para calcular la media y `center=True` centra la ventana en cada fecha. Compara las dos en la turbidez de la pluma del Biobío:
 
 # %%
-serie_pluma = serie_de_punto(tabla, "biobio_pluma", "b04")
-movil_30d = rolling_media(serie_pluma, "30D", minimo=3)  # ventana de 30 días de calendario, centrada
-movil_3 = rolling_media(serie_pluma, 3, minimo=3)  # ventana de 3 observaciones, centrada
+serie_pluma = tabla[tabla["id"] == "biobio_pluma"].set_index("fecha")["b04"].dropna()
+movil_30d = serie_pluma.rolling("30D", min_periods=3, center=True).mean()  # ventana de 30 días de calendario
+movil_3 = serie_pluma.rolling(3, min_periods=3, center=True).mean()  # ventana de 3 observaciones
 
 fig, eje = plt.subplots(figsize=(10, 3.8))
 eje.plot(serie_pluma.index, serie_pluma, "o", markersize=4, color="0.55", label="observaciones")
@@ -160,14 +163,14 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# La de 3 observaciones cubre **intervalos de tiempo distintos**: pocos días en verano y más de un mes en invierno. La de 30 días mide siempre lo mismo, pero no tiene valor donde hay menos de 3 observaciones en la ventana (por eso `minimo=3`: es mejor un hueco que un promedio de un solo dato). Con fechas irregulares, la ventana en días es la más honesta.
+# La de 3 observaciones cubre **intervalos de tiempo distintos**: pocos días en verano y más de un mes en invierno. La de 30 días mide siempre lo mismo, pero no tiene valor donde hay menos de 3 observaciones en la ventana (por eso `min_periods=3`: es mejor un hueco que un promedio de un solo dato). Con fechas irregulares, la ventana en días es la más honesta.
 #
-# **Tu turno 2.** Prueba `"15D"` y `"60D"` con `minimo=2`. ¿Qué pasa con los picos de B04 (en noviembre y en agosto-septiembre) al ensanchar la ventana? ¿Y con los huecos de invierno?
+# **Tu turno 2.** Prueba `"15D"` y `"60D"` con `min_periods=2`. ¿Qué pasa con los picos de B04 (en noviembre y en agosto-septiembre) al ensanchar la ventana? ¿Y con los huecos de invierno?
 
 # %%
 # Tu turno 2
-# movil_15d = rolling_media(serie_pluma, "15D", minimo=2)
-# movil_60d = rolling_media(serie_pluma, "60D", minimo=2)
+# movil_15d = serie_pluma.rolling("15D", min_periods=2, center=True).mean()
+# movil_60d = serie_pluma.rolling("60D", min_periods=2, center=True).mean()
 
 # %% [markdown]
 # ## 4. Tendencia lineal, y qué puede decir un solo año
@@ -178,7 +181,7 @@ plt.show()
 filas = []
 for id_punto in tabla["id"].unique():
     for variable in VARIABLES:
-        tendencia = tendencia_lineal(serie_de_punto(tabla, id_punto, variable))
+        tendencia = tendencia_lineal(tabla[tabla["id"] == id_punto].set_index("fecha")[variable].dropna())
         filas.append({"punto": id_punto, "variable": variable, "n": tendencia.n,
                       "pendiente_por_año": tendencia.pendiente_anual, "r2": tendencia.r2, "p": tendencia.p_valor})
 tendencias = pd.DataFrame(filas)
@@ -188,7 +191,7 @@ tendencias.pivot(index="punto", columns="variable", values="pendiente_por_año")
 # Hay pendientes "grandes" y con valores p diminutos. Veamos la de la pluma del Biobío en NDWI. Ajustamos la recta con todo el año, y otra vez con solo los primeros seis meses (octubre a marzo) y con solo los últimos seis (abril a septiembre):
 
 # %%
-ndwi_pluma = serie_de_punto(tabla, "biobio_pluma", "ndwi")
+ndwi_pluma = tabla[tabla["id"] == "biobio_pluma"].set_index("fecha")["ndwi"].dropna()
 tramos = {"12 meses": ndwi_pluma, "octubre a marzo": ndwi_pluma.loc[:"2026-03-31"], "abril a septiembre": ndwi_pluma.loc["2026-04-01":]}
 colores_tramos = ["#000000", "#D55E00", "#0072B2"]
 fig, eje = plt.subplots(figsize=(10, 3.8))
@@ -217,7 +220,7 @@ plt.show()
 
 # %%
 # Tu turno 3
-# serie = serie_de_punto(tabla, "humedal_rocuant", "b04")
+# serie = tabla[tabla["id"] == "humedal_rocuant"].set_index("fecha")["b04"].dropna()
 # tendencia_lineal(serie.loc[:"2026-03-31"]).pendiente_anual, tendencia_lineal(serie.loc["2026-04-01":]).pendiente_anual
 
 # %% [markdown]
@@ -241,10 +244,11 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# Y la climatología mensual de **un** punto, con `climatologia_mensual`: media, desviación y número de observaciones de cada mes. La barra de error es una desviación estándar. Mira la columna `n`.
+# Y la climatología mensual de **un** punto: agrupamos las observaciones por mes y calculamos media, desviación y número de observaciones de cada mes. La barra de error es una desviación estándar. Mira la columna `n`.
 
 # %%
-clima_pluma = climatologia_mensual(serie_pluma)
+por_mes = serie_pluma.groupby(serie_pluma.index.month.rename("mes"))
+clima_pluma = por_mes.agg(media="mean", desv="std", n="size").reindex(range(1, 13))
 print(clima_pluma.round(3).T.to_string())
 
 orden_meses = clima_pluma.reindex(meses)
@@ -291,7 +295,7 @@ pd.concat([por_estacion.round(3), n_estacion], axis=1)
 # %%
 filas = []
 for id_punto in tabla["id"].unique():
-    serie = serie_de_punto(tabla, id_punto, "b04")
+    serie = tabla[tabla["id"] == id_punto].set_index("fecha")["b04"].dropna()
     z_total = anomalias_zscore(serie, referencia="total")
     z_mes = anomalias_zscore(serie, referencia="mes")
     filas.append({"punto": id_punto, "n": len(serie), "|z| > 2 con 'total'": int((z_total.abs() > 2).sum()),
@@ -339,7 +343,7 @@ revision.round({"b04": 3, "nubes_escena": 1, "pixeles_validos": 2, "z": 1})
 # Y el caso más extremo de todos los puntos, el golfo de Arauco, con un z de varias unidades en B04 en una fecha de enero. La escena casi no tenía nubes y toda la ventana quedó válida. Eso **no lo explica una nube que se coló por la máscara**: hay que mirar la imagen (¿espuma, un barco, un reflejo del sol?) antes de decidir.
 
 # %%
-b04_golfo = serie_de_punto(tabla, "golfo_arauco", "b04")
+b04_golfo = tabla[tabla["id"] == "golfo_arauco"].set_index("fecha")["b04"].dropna()
 z_golfo = anomalias_zscore(b04_golfo, referencia="total")
 fecha_max = z_golfo.idxmax()
 print(f"Golfo de Arauco: B04 máximo {b04_golfo.max():.3f} el {fecha_max:%Y-%m-%d} (z = {z_golfo.max():.1f}); mediana de la serie {b04_golfo.median():.4f}")
@@ -350,7 +354,7 @@ tabla[(tabla["id"] == "golfo_arauco") & (tabla["fecha"] == fecha_max)][["fecha",
 
 # %%
 # Tu turno 5
-# serie_ndci = serie_de_punto(tabla, "bahia_concepcion", "ndci")
+# serie_ndci = tabla[tabla["id"] == "bahia_concepcion"].set_index("fecha")["ndci"].dropna()
 # z_ndci = anomalias_zscore(serie_ndci, referencia="total")
 # z_ndci[z_ndci.abs() > 2]
 
@@ -359,10 +363,13 @@ tabla[(tabla["id"] == "golfo_arauco") & (tabla["fecha"] == fecha_max)][["fecha",
 #
 # Para hacer anomalías **con respecto a una climatología mensual de verdad** se necesita una serie larga. La temperatura de superficie de **Landsat 8 y 9** en el centro de la bahía de Concepción tiene datos desde **2013**: unas 10 a 25 observaciones válidas por año (Landsat pasa cada 8 días, pero las nubes borran muchas fechas). Esa es la serie con la que trabajaremos en el bloque 7.
 #
-# `cargar_landsat()` entrega la tabla de series (igual que tu parquet de Sentinel-2, pero con temperatura y reflectancia ya calibradas), `controlar_calidad_agua` descarta las observaciones que la reflectancia delata como nube y `serie_landsat` saca la serie de un punto. Las fechas con nubes quedan como NaN: no se rellenan.
+# El parquet de Landsat tiene la misma forma que el de Sentinel-2, pero con temperatura y reflectancia ya calibradas. `controlar_calidad_agua` descarta las observaciones que la reflectancia delata como nube, y la serie de un punto se saca igual que antes (aquí quitamos la hora de la toma, porque solo importa el día). Las fechas con nubes quedan como NaN: no se rellenan.
 
 # %%
-st = serie_landsat(controlar_calidad_agua(cargar_landsat()), "bahia_concepcion")
+landsat = pd.read_parquet(DATOS / "series_landsat_concepcion.parquet")
+landsat["fecha"] = landsat["fecha"].dt.normalize()
+landsat = controlar_calidad_agua(landsat)
+st = landsat[landsat["id"] == "bahia_concepcion"].set_index("fecha")["st_c"].astype(float)
 print(f"{len(st)} pasos del satélite, {st.notna().sum()} con dato; {st.index.min():%Y-%m-%d} a {st.index.max():%Y-%m-%d}")
 st.dropna().tail(3)
 
@@ -370,7 +377,8 @@ st.dropna().tail(3)
 # La climatología mensual con la base 2013 a 2024 (12 años completos) tiene **9 a 20 observaciones en cada mes**: bastante más que la de un solo año (2 a 11), pero lejos de las cientos de observaciones de una serie diaria de 30 años. Hay que tenerlo presente al interpretar.
 
 # %%
-clima_st = climatologia_mensual(st.dropna(), base=(2013, 2024))
+base = st.dropna().loc["2013":"2024"]  # los 12 años completos
+clima_st = base.groupby(base.index.month.rename("mes")).agg(media="mean", desv="std", n="size").reindex(range(1, 13))
 print("Observaciones por mes en la base 2013-2024:", int(clima_st["n"].min()), "a", int(clima_st["n"].max()))
 
 fig, eje = plt.subplots(figsize=(8, 3.6))
@@ -446,7 +454,7 @@ mensual_ndci.round(3)
 # **c) El NDVI del humedal.** Mediana mensual del humedal Rocuant-Andalién:
 
 # %%
-ndvi_humedal = serie_de_punto(tabla, "humedal_rocuant", "ndvi")
+ndvi_humedal = tabla[tabla["id"] == "humedal_rocuant"].set_index("fecha")["ndvi"].dropna()
 resumen_humedal = pd.DataFrame({"NDVI mediano": ndvi_humedal.resample("MS").median(), "n": ndvi_humedal.resample("MS").count()}).round(3)
 resumen_humedal.index = resumen_humedal.index.strftime("%Y-%m")
 resumen_humedal.T
