@@ -72,9 +72,10 @@ class Guion:
         return pytipos.SimpleNamespace(candidates=[pytipos.SimpleNamespace(content=contenido)])
 
 
-def correr(guion, servidores, **kw):
-    """Llama a `preguntar` con el LLM simulado, dentro de un bucle asyncio en marcha (como en Colab)."""
-    backend = ia._Gemini("gemini-3.5-flash", cliente=pytipos.SimpleNamespace(models=guion))
+def correr(guion, servidores, modelo=None, **kw):
+    """Llama a `preguntar` con el LLM simulado, dentro de un bucle asyncio en marcha (como en Colab).
+    Sin `modelo` se usa el por defecto con sus respaldos, como en un uso normal."""
+    backend = ia._Gemini(modelo, cliente=pytipos.SimpleNamespace(models=guion))
 
     async def en_bucle():
         return ia.preguntar("pregunta de prueba", servidores, _backend=backend, devolver=True, **kw)
@@ -377,3 +378,70 @@ def test_red_preguntar_con_llm_guionizado_sobre_servidores_reales():
                 ("dataverse_search_datasets", {"host": "datav.udec.cl", "query": "Arauco"})]])
     assert correr(g, ["zenodo", "dataverse"]) == "Respuesta final simulada"
     assert "matches" in g.vistas[0] and g.vistas[1].startswith("Total: ")
+
+
+def _error_google(codigo, estado, mensaje):
+    from google.genai import errors
+
+    return errors.ClientError(codigo, {"error": {"code": codigo, "status": estado, "message": mensaje}})
+
+
+def test_clave_rechazada_403_se_explica_con_el_texto_de_google(servidor_falso, capsys):
+    g = GuionQueFalla(_error_google(403, "PERMISSION_DENIED", "Your API key was reported as leaked."))
+    assert correr(g, [servidor_falso]) is None
+    salida = capsys.readouterr().out
+    assert "Google rechazó tu clave (error 403" in salida and "reported as leaked" in salida
+
+
+def test_clave_no_valida_400_se_explica(servidor_falso, capsys):
+    g = GuionQueFalla(_error_google(400, "INVALID_ARGUMENT", "API key not valid. Please pass a valid API key."))
+    assert correr(g, [servidor_falso]) is None
+    assert "no reconoce tu clave" in capsys.readouterr().out
+
+
+def test_explicar_error_gemini_no_toca_errores_desconocidos():
+    assert ia.explicar_error_gemini(RuntimeError("404 modelo inexistente")) is None
+
+
+def test_clave_se_lee_de_un_archivo_env(tmp_path, monkeypatch):
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.chdir(tmp_path)
+    assert ia._clave_gemini() is None
+    (tmp_path / ".env").write_text('# comentario\nOTRA=x\nexport GOOGLE_API_KEY="abc123"\n', encoding="utf-8")
+    assert ia._clave_gemini() == "abc123"
+    monkeypatch.setenv("GOOGLE_API_KEY", "del_entorno")  # la variable de entorno manda sobre el archivo
+    assert ia._clave_gemini() == "del_entorno"
+
+
+class GuionConCuota(Guion):
+    """'LLM' simulado: los modelos de `sin_cuota` responden 429; los demás, bien. Guarda qué modelos se probaron."""
+
+    def __init__(self, sin_cuota, final="Respuesta con respaldo"):
+        super().__init__([], final=final)
+        self.sin_cuota, self.probados = set(sin_cuota), []
+
+    def generate_content(self, model, contents, config):
+        self.probados.append(model)
+        if model in self.sin_cuota:
+            raise _error_google(429, "RESOURCE_EXHAUSTED", "You exceeded your current quota")
+        return super().generate_content(model, contents, config)
+
+
+def test_si_se_agota_la_cuota_se_sigue_con_el_modelo_de_respaldo(servidor_falso, capsys):
+    g = GuionConCuota(sin_cuota={ia.MODELO_POR_DEFECTO})
+    assert correr(g, [servidor_falso]) == "Respuesta con respaldo"
+    assert g.probados == [ia.MODELO_POR_DEFECTO, ia.MODELOS_RESPALDO[0]]
+    assert f"sigo con {ia.MODELOS_RESPALDO[0]}" in capsys.readouterr().out
+
+
+def test_si_se_agota_la_cuota_de_todos_los_modelos_da_el_mensaje_de_cuota(servidor_falso, capsys):
+    g = GuionConCuota(sin_cuota={ia.MODELO_POR_DEFECTO, *ia.MODELOS_RESPALDO})
+    assert correr(g, [servidor_falso]) is None
+    assert g.probados == [ia.MODELO_POR_DEFECTO, *ia.MODELOS_RESPALDO]
+    assert "Cuota gratuita agotada" in capsys.readouterr().out
+
+
+def test_con_modelo_elegido_a_mano_no_hay_respaldo(servidor_falso):
+    g = GuionConCuota(sin_cuota={"mi-modelo"})
+    assert correr(g, [servidor_falso], modelo="mi-modelo") is None
+    assert g.probados == ["mi-modelo"]

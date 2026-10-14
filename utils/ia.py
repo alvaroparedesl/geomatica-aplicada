@@ -126,6 +126,9 @@ SERVIDORES: dict[str, dict] = {
 }
 
 MODELO_POR_DEFECTO = "gemini-3.5-flash"  # gratuito en AI Studio (con límites de uso)
+# Si la cuota diaria del modelo por defecto se agota (429), se sigue con estos: la cuota se cuenta por modelo y
+# los "lite" tienen más margen. Solo se usan si no se elige `modelo=` a mano.
+MODELOS_RESPALDO = ("gemini-3.5-flash-lite", "gemini-3.1-flash-lite")
 MAX_CARACTERES_RESULTADO = 8000  # lo que se devuelve al modelo por llamada (ahorra cuota)
 ESPERAS_REINTENTO = (3, 6, 12, 20)  # segundos entre reintentos cuando Gemini está saturado (503)
 
@@ -369,7 +372,19 @@ def _clave_gemini() -> str | None:
             return clave
     except Exception:  # fuera de Colab, o el secreto no existe / no tiene acceso desde el cuaderno
         pass
-    return os.environ.get("GOOGLE_API_KEY") or None
+    return os.environ.get("GOOGLE_API_KEY") or _clave_de_env()
+
+
+def _clave_de_env(archivo: str = ".env") -> str | None:
+    """GOOGLE_API_KEY escrita en un archivo `.env` de la carpeta de trabajo (líneas `NOMBRE=valor`)."""
+    try:
+        for linea in Path(archivo).read_text(encoding="utf-8").splitlines():
+            nombre, igual, valor = linea.strip().removeprefix("export ").partition("=")
+            if igual and nombre.strip() == "GOOGLE_API_KEY":
+                return valor.strip().strip("\"'") or None
+    except OSError:
+        pass
+    return None
 
 
 def _limpiar_esquema(esquema):
@@ -380,6 +395,34 @@ def _limpiar_esquema(esquema):
     if isinstance(esquema, list):
         return [_limpiar_esquema(v) for v in esquema]
     return esquema
+
+
+def explicar_error_gemini(error: BaseException) -> str | None:
+    """Mensaje claro para un error de Gemini que no es un fallo del cuaderno (cuota, saturación, clave
+    rechazada), con el texto que devolvió Google; None si no lo reconoce."""
+    causas = mensaje_de_error(error, largo=2000)
+    hojas = _hojas(error)
+    if "429" in causas or "RESOURCE_EXHAUSTED" in causas:
+        return ("Cuota gratuita agotada (error 429). Espera un minuto o reduce la pregunta; "
+                "el límite diario se reinicia a medianoche (hora del Pacífico).")
+    if any(_es_transitorio(h) for h in hojas):
+        return ("Gemini sigue saturado (error 503) después de varios intentos. No es un problema de tu clave ni "
+                "del cuaderno: es el servicio de Google con mucha demanda. Espera unos minutos y vuelve a "
+                "ejecutar la celda, o sigue con la demostración del expositor.")
+    if any(getattr(h, "code", None) == 403 for h in hojas) or "PERMISSION_DENIED" in causas:
+        return ("Google rechazó tu clave (error 403, permiso denegado). Causas habituales: la clave fue borrada o "
+                "desactivada (por ejemplo, Google la bloquea si se publicó en internet), pertenece a un proyecto "
+                "sin acceso a la API de Gemini, o tu país o cuenta no tienen acceso. Crea una clave nueva en "
+                f"aistudio.google.com/apikey.\nRespuesta de Google: {mensaje_de_error(error, largo=500)}")
+    if "API_KEY_INVALID" in causas or "API key not valid" in causas:
+        return ("Google no reconoce tu clave (error 400, clave no válida). Revisa que la copiaste completa y sin "
+                f"espacios, o crea otra en aistudio.google.com/apikey.\nRespuesta de Google: {mensaje_de_error(error, largo=500)}")
+    return None
+
+
+def _cuota_agotada(error: BaseException) -> bool:
+    """True si Gemini rechazó la llamada por cuota (429)."""
+    return getattr(error, "code", None) == 429 or "RESOURCE_EXHAUSTED" in str(error)
 
 
 def _es_transitorio(error: BaseException) -> bool:
@@ -397,7 +440,8 @@ class _Gemini:
         from google.genai import types
 
         self.types = types
-        self.modelo = modelo or MODELO_POR_DEFECTO
+        self.modelos = [modelo] if modelo else [MODELO_POR_DEFECTO, *MODELOS_RESPALDO]
+        self.modelo = self.modelos[0]
         if cliente is None:
             clave = _clave_gemini()
             if not clave:
@@ -406,11 +450,17 @@ class _Gemini:
         self.cliente = cliente
 
     async def _generar(self, contenidos, cfg, emit):
-        """Una llamada a Gemini; si el servicio está saturado (503) espera y reintenta."""
+        """Una llamada a Gemini; si el servicio está saturado (503) espera y reintenta, y si la cuota del
+        modelo se agotó (429) pasa al siguiente modelo de respaldo."""
         for espera in (*ESPERAS_REINTENTO, None):
             try:
                 return self.cliente.models.generate_content(model=self.modelo, contents=contenidos, config=cfg)
             except Exception as e:  # noqa: BLE001
+                if _cuota_agotada(e) and self.modelo != self.modelos[-1]:
+                    siguiente = self.modelos[self.modelos.index(self.modelo) + 1]
+                    emit(f"          (se agotó la cuota de {self.modelo}; sigo con {siguiente})")
+                    self.modelo = siguiente
+                    continue
                 if espera is None or not _es_transitorio(e):
                     raise
                 emit(f"          (Gemini está saturado en este momento; espero {espera} s y reintento)")
@@ -439,6 +489,12 @@ class _Gemini:
                 partes.append(t.Part.from_function_response(name=fc.name, response={"resultado": salida}))
             contenidos.append(t.Content(role="user", parts=partes))
         return "(se alcanzó el máximo de pasos sin respuesta final)"
+
+
+def generar_texto(instruccion: str, modelo: str | None = None) -> str:
+    """Una consulta simple a Gemini, sin herramientas MCP (misma clave, mismo respaldo de modelos)."""
+    gemini = _Gemini(modelo)
+    return _correr(gemini._generar([instruccion], None, print), print).text
 
 
 def preguntar(pregunta: str, servidores=("zenodo", "dataverse"), modelo: str | None = None,
@@ -537,17 +593,11 @@ def preguntar(pregunta: str, servidores=("zenodo", "dataverse"), modelo: str | N
     try:
         respuesta = _correr(_ir(), print)
     except Exception as e:
-        causas = mensaje_de_error(e, largo=2000)
-        if "429" in causas or "RESOURCE_EXHAUSTED" in causas:
-            print("Cuota gratuita agotada (error 429). Espera un minuto o reduce la pregunta; "
-                  "el límite diario se reinicia a medianoche (hora del Pacífico).")
+        explicacion = explicar_error_gemini(e)
+        if explicacion:
+            print(explicacion)
             return None
         hojas = _hojas(e)
-        if any(_es_transitorio(h) for h in hojas):
-            print("Gemini sigue saturado (error 503) después de varios intentos. No es un problema de tu clave ni "
-                  "del cuaderno: es el servicio de Google con mucha demanda. Espera unos minutos y vuelve a "
-                  "ejecutar la celda, o sigue con la demostración del expositor.")
-            return None
         if len(hojas) == 1 and hojas[0] is not e:
             raise hojas[0] from None  # el error real, no el ExceptionGroup que lo envuelve
         raise
