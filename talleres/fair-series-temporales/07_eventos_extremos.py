@@ -32,7 +32,7 @@
 # %% [markdown]
 # ## Configuración del entorno
 #
-# La celda `Preparar entorno` deja disponible la carpeta `utils/` del curso. Esta vez usamos `utils/extremos.py` (climatología, episodios, Isolation Forest y la malla), `utils/series.py` (la carga de Landsat), `utils/raster.py` (la calibración) y `utils/datos_taller.py` (los datos preparados del taller).
+# La celda `Preparar entorno` deja disponible la carpeta `utils/` del curso y la variable `DATOS`, la carpeta con los archivos de datos del taller. Esta vez usamos `utils/extremos.py` (control de calidad, climatología, episodios, Isolation Forest y la malla), `utils/series.py` (la tabla de Landsat y el guardado de resultados), `utils/stac.py` (los parámetros de carga) y `utils/raster.py` (la comprobación de la calibración). La lectura de los datos, las series de cada punto y la conexión al catálogo las escribes tú con pandas, xarray y `pystac_client`.
 
 # %%
 # @title Preparar entorno (ejecutar primero)
@@ -50,6 +50,7 @@ if "google.colab" in sys.modules:  # Colab: clonar el repositorio (y actualizarl
 else:  # Local: subir desde la carpeta actual hasta encontrar utils/
     RAIZ = next(p for p in [Path.cwd(), *Path.cwd().parents] if (p / "utils").is_dir())
 sys.path.insert(0, str(RAIZ))
+DATOS = RAIZ / "talleres" / "fair-series-temporales" / "datos"  # carpeta con los archivos de datos del taller
 
 # %%
 # @title Instalar los paquetes de este bloque (solo si faltan)
@@ -76,16 +77,20 @@ import matplotlib.pyplot as plt
 import numpy as np
 import odc.stac
 import pandas as pd
-
+import planetary_computer
+import pyarrow.parquet as pq
+import xarray as xr
 from IPython.display import display
+from pyproj import Transformer
+from pystac_client import Client
 
-from utils.extremos import (aislamiento_forest_observaciones, anomalia_malla, anomalias_observaciones, cargar_landsat,
+# Funciones de apoyo del curso (carpeta utils/)
+from utils.extremos import (aislamiento_forest_observaciones, anomalia_malla, anomalias_observaciones,
                             climatologia_malla, climatologia_ventana, controlar_calidad_agua, detectar_episodios,
-                            dia_del_anio_366, episodios_por_punto, evento_en_curso, frecuencia_anomalias_malla,
-                            resumen_eventos, serie_landsat, solapamiento)
+                            episodios_por_punto, frecuencia_anomalias_malla, resumen_eventos, solapamiento)
 from utils.series import (agregar_atributos_landsat, bbox_punto, cargar_ventanas_landsat, construir_series_landsat,
-                          guardar_series, leer_metadatos_series)
-from utils.stac import conectar_catalogo, parametros_carga
+                          guardar_series)
+from utils.stac import parametros_carga
 
 plt.rcParams.update({"figure.dpi": 100, "axes.grid": True, "grid.alpha": 0.3})
 ROJO, AZUL, GRIS = "#c0392b", "#2471a3", "#7f8c8d"
@@ -106,13 +111,13 @@ ROJO, AZUL, GRIS = "#c0392b", "#2471a3", "#7f8c8d"
 #
 # ### 1.1 Calibrar una escena con tus propias manos
 #
-# Leemos una ventana pequeña (unos 400 m de lado) de una escena **despejada**: el centro de la bahía de Concepción el **13 de febrero de 2024**. Es la llamada nativa de `pystac_client` y `odc.stac`; `parametros_carga` solo arma sus argumentos.
+# Leemos una ventana pequeña (unos 400 m de lado) de una escena **despejada**: el centro de la bahía de Concepción el **13 de febrero de 2024**. Es la llamada nativa de `pystac_client` (el parámetro `modifier=planetary_computer.sign_inplace` firma los enlaces para poder leer los archivos) y de `odc.stac`; `parametros_carga` solo arma sus argumentos.
 
 # %%
 LON, LAT = -73.0000, -36.6900                              # centro de la bahía de Concepción
 bbox = bbox_punto(LON, LAT, 200)                           # ventana de unos 400 x 400 m
 
-catalogo = conectar_catalogo("planetary")
+catalogo = Client.open("https://planetarycomputer.microsoft.com/api/stac/v1", modifier=planetary_computer.sign_inplace)
 items = list(catalogo.search(collections=["landsat-c2-l2"], bbox=bbox, datetime="2024-02-13/2024-02-13").items())
 print([(i.id, i.properties["platform"]) for i in items])
 
@@ -156,13 +161,16 @@ print(f"Diferencia con la calibración manual de la temperatura: {dif_temperatur
 # %% [markdown]
 # ### 1.2 La tabla preparada del taller
 #
-# Hacer esto para 6 puntos y unas 390 fechas desde 2013 toma unos 30 minutos, así que esa parte está **preparada antes del taller** (el script `datos/preparar_landsat.py` repite los pasos que acabamos de ver, con la máscara de nubes y el resumen por punto). Para cada punto y fecha, la tabla trae la **mediana de una ventana circular de 200 m de radio**, ya calibrada y sin los píxeles con nubes, sombras o saturación. Cargamos con `cargar_landsat`.
+# Hacer esto para 6 puntos y unas 390 fechas desde 2013 toma unos 30 minutos, así que esa parte está **preparada antes del taller** (el script `datos/preparar_landsat.py` repite los pasos que acabamos de ver, con la máscara de nubes y el resumen por punto). Para cada punto y fecha, la tabla trae la **mediana de una ventana circular de 200 m de radio**, ya calibrada y sin los píxeles con nubes, sombras o saturación. La leemos con `pd.read_parquet`. Los metadatos viajan dentro del archivo, como bytes (la clave `pandas` es de pandas y no nos interesa), y se leen con `pyarrow`. Como solo importa el **día** de la toma (la hora es siempre casi la misma, unas 14:40 UTC), quitamos la hora de la fecha una sola vez, aquí con `dt.normalize()`.
 
 # %%
-tabla = cargar_landsat()
+ruta = DATOS / "series_landsat_concepcion.parquet"
+tabla = pd.read_parquet(ruta)
+tabla["fecha"] = tabla["fecha"].dt.normalize()      # solo importa el día: la hora de la toma se descarta
 print(f"{len(tabla)} filas, {tabla['id'].nunique()} puntos, del {tabla['fecha'].min().date()} al {tabla['fecha'].max().date()}")
 display(tabla.drop(columns=["nombre", "lat", "lon"]).head(4).round(3))
-for clave, valor in leer_metadatos_series(RAIZ / "talleres/fair-series-temporales/datos/series_landsat_concepcion.parquet").items():
+metadatos = {k.decode(): v.decode() for k, v in pq.read_schema(ruta).metadata.items() if k != b"pandas"}
+for clave, valor in metadatos.items():
     if clave in ("titulo", "fuente", "licencia", "periodo"):
         print(f"{clave:9s}: {valor}")
 
@@ -187,11 +195,11 @@ print(f"Reflectancia roja al recalcular: {fila['rojo']:.4f} | en la tabla: {guar
 # %% [markdown]
 # ## 2. Una serie irregular: pasos del satélite, nubes y control de calidad
 #
-# Elegimos el **centro de la bahía** y miramos la serie sin ningún análisis todavía. `serie_landsat` devuelve una `Series` de pandas con **todos los pasos del satélite**; las fechas con nubes quedan como `NaN` (no se descartan, así vemos los huecos).
+# Elegimos el **centro de la bahía** y miramos la serie sin ningún análisis todavía. La serie de un punto se saca de la tabla filtrando por `id`, usando la fecha como índice y tomando la columna de la variable (`st_c`, la temperatura en °C). Es una `Series` de pandas con **todos los pasos del satélite**; las fechas con nubes quedan como `NaN` (no se descartan, así vemos los huecos).
 
 # %%
 PUNTO = "bahia_concepcion"                     # prueba "san_vicente", "biobio_pluma", "golfo_arauco" o "laguna_grande"
-st = serie_landsat(tabla, PUNTO)
+st = tabla[tabla["id"] == PUNTO].set_index("fecha")["st_c"].astype(float)
 print(f"{len(st)} pasos del satélite, {st.notna().sum()} con dato ({st.notna().mean():.0%}); {st.isna().sum()} perdidos por nubes")
 st.dropna().tail()
 
@@ -244,10 +252,10 @@ print(f"Mediana de {intervalos.median():.0f} días entre observaciones válidas,
 AGUA = ["bahia_concepcion", "san_vicente", "biobio_pluma", "golfo_arauco", "laguna_grande"]
 filas = []
 for punto in AGUA:
-    s = serie_landsat(tabla, punto)
+    de_punto = tabla[tabla["id"] == punto].set_index("fecha")
+    s = de_punto["st_c"].astype(float)
     a = anomalias_observaciones(s, climatologia_ventana(s))["anomalia"].dropna()
-    ext = tabla[(tabla["id"] == punto)].assign(dia=lambda d: d["fecha"].dt.normalize()).set_index("dia")
-    ext = ext[~ext.index.duplicated()].loc[a.index, ["rojo", "ndwi", "nubes_escena"]].assign(anomalia=a, punto=punto)
+    ext = de_punto.loc[a.index, ["rojo", "ndwi", "nubes_escena"]].assign(anomalia=a, punto=punto)
     filas.append(ext)
 frias = pd.concat(filas).nsmallest(8, "anomalia")
 frias.round(3)
@@ -261,7 +269,7 @@ descartadas = (tabla["st_c"].notna() & tabla_qc["st_c"].isna()).groupby(tabla["i
 print("Observaciones con dato descartadas por sospecha de nube:")
 print(descartadas.to_string())
 
-st_qc = serie_landsat(tabla_qc, PUNTO)
+st_qc = tabla_qc[tabla_qc["id"] == PUNTO].set_index("fecha")["st_c"].astype(float)
 print(f"\n{PUNTO}: {st.notna().sum()} observaciones antes del control, {st_qc.notna().sum()} después")
 
 # %% [markdown]
@@ -290,11 +298,12 @@ print(f"\n{PUNTO}: {st.notna().sum()} observaciones antes del control, {st_qc.no
 # %% [markdown]
 # ### 3.1 Un calendario de 366 días
 #
-# La climatología es **una curva por día del año**. Los años bisiestos tienen 366 días, así que el día 100 no cae en la misma fecha todos los años. La convención de Hobday: el 29 de febrero es siempre el día 60 y, en los años no bisiestos, desde el 1 de marzo se suma 1. `dia_del_anio_366` lo hace.
+# La climatología es **una curva por día del año**. Los años bisiestos tienen 366 días, así que el día 100 no cae en la misma fecha todos los años. La convención de Hobday: el 29 de febrero es siempre el día 60 y, en los años no bisiestos, desde el 1 de marzo se suma 1. Con pandas se escribe en una línea: `dayofyear` da el día del año y le sumamos 1 (un `True`) cuando el año **no** es bisiesto (`~is_leap_year`) y el mes es marzo o posterior.
 
 # %%
 datos = st_qc.dropna().to_frame("st")
-datos["dia"] = dia_del_anio_366(datos.index)
+indice = datos.index
+datos["dia"] = indice.dayofyear.to_numpy() + (~indice.is_leap_year & (indice.month >= 3)).astype(int)
 datos.loc["2022-03-01":"2022-03-20"].head(3)
 
 # %% [markdown]
@@ -482,8 +491,9 @@ resumen = episodios.groupby(["punto", "tipo"]).agg(episodios=("inicio", "size"),
                                                   intensidad_max=("intensidad_max", lambda x: x.loc[x.abs().idxmax()])).round(2)
 display(resumen)
 print(f"Total: {len(episodios)} episodios")
-actual = evento_en_curso(episodios)
-if actual is not None:
+activos = episodios[episodios["en_curso"]]               # episodios que siguen activos en la última observación
+if not activos.empty:
+    actual = activos.iloc[-1]
     print(f"Episodio en curso: {actual['nombre']} ({actual['tipo']}), desde el {actual['inicio'].date()}, "
           f"{actual['n_obs']} observaciones, anomalía máxima {actual['intensidad_max']:.2f} °C. Su duración es provisoria: puede crecer o terminar.")
 
@@ -511,7 +521,7 @@ percentil = 90          # prueba 95 (más exigente) u 85
 min_obs = 2             # prueba 3 o 1
 brecha_max_dias = 24    # prueba 16 o 40
 
-st_golfo = serie_landsat(tabla_qc, "golfo_arauco")      # el punto con más episodios cálidos
+st_golfo = tabla_qc[tabla_qc["id"] == "golfo_arauco"].set_index("fecha")["st_c"].astype(float)      # el punto con más episodios cálidos
 clima_t = climatologia_ventana(st_golfo, percentiles=(percentil, 100 - percentil))
 ev_t = detectar_episodios(st_golfo, clima_t, "calor", min_obs=min_obs, brecha_max_dias=brecha_max_dias, columna_umbral=f"p{percentil}")
 print(f"Golfo de Arauco, p{percentil}, al menos {min_obs} observaciones, brecha de hasta {brecha_max_dias} días: {len(ev_t)} episodios cálidos "
@@ -535,7 +545,7 @@ resumen_puntos.sort_values("st_mediana")
 fig, ax = plt.subplots(figsize=(9, 3.8))
 colores = {"bahia": AZUL, "pluma": "#d68910", "golfo": "#1e8449", "laguna": "#8e44ad", "humedal": ROJO}
 for punto in tabla_qc["id"].unique():
-    s = serie_landsat(tabla_qc, punto).dropna()
+    s = tabla_qc[tabla_qc["id"] == punto].set_index("fecha")["st_c"].dropna()
     tipo = tabla_qc.loc[tabla_qc["id"] == punto, "tipo"].iloc[0]
     mensual = s.groupby(s.index.month).median()
     ax.plot(mensual.index, mensual, "o-", ms=4, color=colores[tipo], label=f"{punto} ({tipo})")
@@ -554,7 +564,7 @@ plt.show()
 
 # %%
 def anomalia_de(variable, punto, tabla_origen=tabla_qc):
-    s = serie_landsat(tabla_origen, punto, variable)
+    s = tabla_origen[tabla_origen["id"] == punto].set_index("fecha")[variable].astype(float)
     return anomalias_observaciones(s, climatologia_ventana(s))["anomalia"].dropna()
 
 
@@ -587,7 +597,8 @@ pd.DataFrame(filas).set_index("punto")
 
 # %%
 variables = ["st_c", "rojo", "ndwi"]
-obs = pd.DataFrame({v: serie_landsat(tabla_qc, PUNTO, v) for v in variables})
+de_punto = tabla_qc[tabla_qc["id"] == PUNTO].set_index("fecha")
+obs = de_punto[variables].astype(float)
 clima_vars = {v: climatologia_ventana(obs[v]) for v in variables}
 
 solo_temperatura = aislamiento_forest_observaciones(obs, ["st_c"], clima_vars, contaminacion=0.1)
@@ -671,7 +682,8 @@ pd.DataFrame(filas).set_index("contaminación")
 # Hasta ahora miramos puntos. Landsat da imágenes: la malla preparada (`landsat_malla_concepcion.nc`) tiene la **temperatura de superficie cada 500 m** en un cuadrado de 0,8 grados alrededor de la bahía de Concepción y el golfo de Arauco, para todas las fechas con al menos 10 % de píxeles válidos. Es una **muestra de un píxel cada 500 m** (sin promediar), con nubes como `NaN`.
 
 # %%
-malla_bruta = cargar_landsat("malla")
+with xr.open_dataset(DATOS / "landsat_malla_concepcion.nc") as ds:
+    malla_bruta = ds["st_c"].load().astype("float32")      # cargar en memoria antes de cerrar el archivo
 print(malla_bruta.sizes, "| fechas:", str(malla_bruta["time"].values[0])[:10], "a", str(malla_bruta["time"].values[-1])[:10])
 print(f"Mínimo de la malla: {float(malla_bruta.min()):.1f} °C | máximo: {float(malla_bruta.max()):.1f} °C")
 
@@ -686,9 +698,9 @@ validas = malla.notnull().sum("time")
 print(f"Observaciones válidas por píxel: de {int(validas.min())} a {int(validas.max())} (mediana {int(validas.median())})")
 
 # %%
-from utils.raster import lonlat_a_crs
-
-puntos_xy = {fila.id: lonlat_a_crs(fila.lon, fila.lat, "EPSG:32718") for fila in tabla.drop_duplicates("id").itertuples()}
+# Las coordenadas de los puntos están en grados (EPSG:4326); la malla está en UTM 18 S (EPSG:32718)
+a_utm = Transformer.from_crs("EPSG:4326", "EPSG:32718", always_xy=True)
+puntos_xy = {fila.id: a_utm.transform(fila.lon, fila.lat) for fila in tabla.drop_duplicates("id").itertuples()}
 verano = malla.sel(time=malla["time"].dt.month.isin([12, 1, 2])).mean("time")
 x_km, y_km = malla["x"] / 1000, malla["y"] / 1000
 
@@ -787,7 +799,7 @@ guardar_series(episodios, ruta_episodios, metadatos={
                  "en_curso": "True si termina en la última observación válida de la serie"},
 })
 print(f"Guardado: {ruta_episodios}  ({ruta_episodios.stat().st_size / 1024:.0f} KB, {len(episodios)} episodios)")
-print(list(leer_metadatos_series(ruta_episodios)))
+print([k.decode() for k in pq.read_schema(ruta_episodios).metadata if k != b"pandas"])     # claves de los metadatos guardados
 
 # %% [markdown]
 # ## Resumen
