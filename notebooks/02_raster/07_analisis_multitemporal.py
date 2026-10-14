@@ -28,11 +28,13 @@ import subprocess
 import sys
 from pathlib import Path
 
-if "google.colab" in sys.modules:  # Colab: clonar el repositorio (solo la primera vez)
+if "google.colab" in sys.modules:  # Colab: clonar el repositorio (y actualizarlo si ya estaba)
     RAIZ = Path("/content/geomatica-aplicada")
     if not RAIZ.exists():
         subprocess.run(["git", "clone", "-q", "--depth", "1",
                         "https://github.com/alvaroparedesl/geomatica-aplicada", str(RAIZ)], check=True)
+    else:  # una sesión anterior ya lo clonó: traer lo nuevo para no usar código viejo
+        subprocess.run(["git", "-C", str(RAIZ), "pull", "-q", "--ff-only"], check=False)
 else:  # Local: subir desde la carpeta actual hasta encontrar utils/
     RAIZ = next(p for p in [Path.cwd(), *Path.cwd().parents] if (p / "utils").is_dir())
 sys.path.insert(0, str(RAIZ))
