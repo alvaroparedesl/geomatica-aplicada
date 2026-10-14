@@ -291,7 +291,7 @@ shutil.rmtree(demo)    # borramos el repositorio de la demostración
 #
 # Ahora trabajamos con Git de verdad. Para poder ejecutar el cuaderno de principio a fin en cualquier lugar, el repositorio de práctica vive en una carpeta temporal. En Colab será tu carpeta de trabajo; el paso final lo subirá a GitHub.
 #
-# Empezamos con el **código de los cuadernos anteriores**, tal como suele quedar: un script plano que va de arriba abajo (cargar la serie de temperatura de Landsat, detectar episodios, calcular anomalías de Sentinel-2).
+# Empezamos con el **código de los cuadernos anteriores**, tal como suele quedar: un script plano que va de arriba abajo (cargar la serie de temperatura de Landsat, detectar episodios, calcular anomalías de Sentinel-2). Los parquet se leen con `pd.read_parquet`, como en los bloques anteriores; `abrir_dato` solo busca el archivo en la carpeta `datos/` del curso (o lo descarga de GitHub si no está), porque el script vive en tu proyecto y no junto a los datos.
 
 # %%
 PROYECTO = TALLER / "analisis-taller"
@@ -306,17 +306,21 @@ git("status", "--short", "--branch", cwd=PROYECTO)
 SCRIPT_V1 = '''"""Análisis del taller, versión 1: un script plano de arriba hacia abajo."""
 import pandas as pd
 
-from utils.extremos import cargar_landsat, climatologia_ventana, controlar_calidad_agua, detectar_episodios, serie_landsat
-from utils.series import anomalias_zscore, cargar_series, serie_de_punto
+from utils.datos_taller import abrir_dato
+from utils.extremos import climatologia_ventana, controlar_calidad_agua, detectar_episodios
+from utils.series import anomalias_zscore
 
-st = serie_landsat(controlar_calidad_agua(cargar_landsat()), "bahia_concepcion")
+landsat = pd.read_parquet(abrir_dato("series_landsat_concepcion.parquet"))
+landsat["fecha"] = landsat["fecha"].dt.normalize()  # solo importa el día, no la hora de la toma
+landsat = controlar_calidad_agua(landsat)
+st = landsat[landsat["id"] == "bahia_concepcion"].set_index("fecha")["st_c"].astype(float)
 clima = climatologia_ventana(st)
 calor = detectar_episodios(st, clima, "calor")
 frio = detectar_episodios(st, clima, "frio")
 print("Episodios de calor:", len(calor), "| Episodios de frío:", len(frio))
 
-tabla = cargar_series()
-serie = serie_de_punto(tabla, "bahia_concepcion", "ndwi")
+tabla = pd.read_parquet(abrir_dato("series_sentinel2_concepcion.parquet"))
+serie = tabla[tabla["id"] == "bahia_concepcion"].set_index("fecha")["ndwi"].dropna()
 z = anomalias_zscore(serie, referencia="total")
 print("Fechas con |z| > 2:", int((z.abs() > 2).sum()), "de", len(z))
 '''
@@ -347,13 +351,17 @@ git("mv", "analisis.py", "analisis_taller.py", cwd=PROYECTO)
 SCRIPT_V2 = '''"""Análisis del taller: episodios de temperatura en Landsat y anomalías de Sentinel-2."""
 import pandas as pd
 
-from utils.extremos import cargar_landsat, climatologia_ventana, controlar_calidad_agua, detectar_episodios, serie_landsat
-from utils.series import anomalias_zscore, cargar_series, serie_de_punto
+from utils.datos_taller import abrir_dato
+from utils.extremos import climatologia_ventana, controlar_calidad_agua, detectar_episodios
+from utils.series import anomalias_zscore
 
 
 def episodios_landsat(punto="bahia_concepcion"):
     """Episodios cálidos y fríos de la temperatura de superficie (Landsat 8 y 9) en un punto, en una sola tabla."""
-    st = serie_landsat(controlar_calidad_agua(cargar_landsat()), punto)
+    landsat = pd.read_parquet(abrir_dato("series_landsat_concepcion.parquet"))
+    landsat["fecha"] = landsat["fecha"].dt.normalize()  # solo importa el día, no la hora de la toma
+    landsat = controlar_calidad_agua(landsat)
+    st = landsat[landsat["id"] == punto].set_index("fecha")["st_c"].astype(float)
     clima = climatologia_ventana(st)
     calor = detectar_episodios(st, clima, "calor")
     frio = detectar_episodios(st, clima, "frio")
@@ -362,7 +370,8 @@ def episodios_landsat(punto="bahia_concepcion"):
 
 def anomalias_punto(punto="bahia_concepcion", variable="ndwi"):
     """Anomalía estandarizada (z-score) de una variable de Sentinel-2 en un punto."""
-    serie = serie_de_punto(cargar_series(), punto, variable)
+    tabla = pd.read_parquet(abrir_dato("series_sentinel2_concepcion.parquet"))
+    serie = tabla[tabla["id"] == punto].set_index("fecha")[variable].dropna()
     return anomalias_zscore(serie, referencia="total")
 
 
