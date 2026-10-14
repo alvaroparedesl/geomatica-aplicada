@@ -2,21 +2,43 @@
 
 Datos preparados antes del taller para que los cuadernos carguen rápido en Colab. Los cuadernos los leen con `utils.datos_taller.abrir_dato(nombre)`: usa esta carpeta si existe y, si no, los descarga de GitHub.
 
-## Temperatura superficial del mar (NOAA OISST v2.1)
+## Temperatura de superficie y reflectancia de Landsat 8 y 9
 
 | Archivo | Contenido |
 |---|---|
-| `oisst_centro_sur.nc` | Malla diaria de 24 x 20 píxeles (0,25 grados), 34-40 S y 71-76 O, NetCDF comprimido |
-| `oisst_concepcion.csv` | Serie diaria del píxel frente a Concepción (latitud -36.875, longitud -73.375), columnas `fecha` y `sst_c` |
-| `preparar_oisst.py` | Script que genera ambos archivos |
+| `series_landsat_concepcion.parquet` | Serie por punto y fecha (marzo de 2013 a octubre de 2026), formato ancho: temperatura de superficie en °C, reflectancia, NDWI y NDVI |
+| `landsat_malla_concepcion.nc` | Temperatura de superficie (°C) cada 500 m en un cuadrado de 0,8 grados alrededor de la bahía de Concepción y el golfo de Arauco, con todas las fechas con al menos 10 % de píxeles válidos (UTM 18 S, EPSG:32718) |
+| `preparar_landsat.py` | Script que genera ambos archivos (`python preparar_landsat.py malla` regenera solo la malla) |
 
-- **Fuente:** NOAA Optimum Interpolation Sea Surface Temperature v2.1, leída como COG desde Microsoft Planetary Computer (colección `noaa-cdr-sea-surface-temperature-optimum-interpolation`).
-- **Periodo:** 1981-09-01 a 2026-09-24.
-- **Unidades:** grados Celsius. Los píxeles de tierra son `NaN`.
-- **Licencia:** dominio público (datos de NOAA).
-- **Vacíos conocidos:** Planetary Computer no tiene los días 2024-06-20 a 2026-03-05 (624 días) ni 2026-03-07 y 2026-03-08. No se rellenaron con otras fuentes: en el CSV aparecen como filas vacías y en la malla esas fechas no existen. Trabajar con este vacío es parte del taller.
+- **Fuente:** USGS Landsat 8 y 9 Collection 2 Level-2, leído como COG desde Microsoft Planetary Computer (colección `landsat-c2-l2`).
+- **Calibración:** los archivos del catálogo guardan números enteros (DN). El script los convierte con `temperatura (K) = DN * 0.00341802 + 149.0` (banda `lwir11`, luego se resta 273,15 para °C) y `reflectancia = DN * 0.0000275 - 0.2` (verde, rojo, NIR y SWIR1). DN 0 es "sin dato" y las temperaturas fuera de 230 a 340 K son error. Las funciones son `utils.raster.convertir_a_temperatura` y `convertir_a_reflectancia`.
+- **Malla (`landsat_malla_concepcion.nc`):** 495 fechas (28 de marzo de 2013 a 8 de octubre de 2026) de 181 x 146 píxeles de 500 m (UTM 18 S, de 624 a 697 km al este y de 5864 a 5954 km al norte), guardada como entero (centésimas de °C) comprimido: 8,4 MB. Es una **muestra de un píxel cada 500 m** (un píxel de 30 m por cada celda de 500 m, sin promediar), con NaN donde hay nubes. Solo guarda la banda térmica, así que **no tiene el control de calidad con la reflectancia** de la tabla por punto: hay valores imposibles (hasta -43 °C, el piso de la calibración: el tope frío de una nube sin marcar; un 4,6 % está bajo 3 °C), y el cuaderno del bloque 7 los descarta con una regla simple. Una fecha entra solo si al menos el 10 % de sus píxeles quedó libre de nubes.
+- **Máscara:** se descartan los píxeles con relleno, nube, nube dilatada, cirrus, sombra de nube (`qa_pixel`) y saturación (`qa_radsat`).
+- **Resolución:** la banda térmica tiene 100 m nativos y el USGS la entrega a 30 m. Sobre el agua el producto mide la temperatura de la **piel** de la superficie (no la del agua en profundidad), con errores de alrededor de 1 K o más que crecen con la humedad atmosférica y las nubes delgadas; no es un producto oceanográfico.
+- **Licencia:** dominio público (datos del USGS).
+- **Escenas descartadas:** `LC08_L2SP_001086_20140305_02_T1` (banda térmica `lwir11`) y `LC08_L2SP_001086_20221106_02_T1` (bandas verde y roja) tienen en Planetary Computer un archivo dañado: el servidor devuelve una página de error de unos 14 kB en vez del GeoTIFF y GDAL falla con "not recognized as being in a supported file format". El script las detecta con `utils.stac.items_legibles` y las excluye. Si Planetary Computer las repara, basta volver a ejecutar el script (tarda unos 45 minutos).
 
-Para actualizar los datos, ejecuta `python preparar_oisst.py` dentro de esta carpeta (tarda unos 10 a 15 minutos).
+### `series_landsat_concepcion.parquet`
+
+| Columna | Descripción |
+|---|---|
+| `id`, `nombre`, `tipo`, `lat`, `lon` | El punto (de `puntos_concepcion.csv`) |
+| `fecha` | Fecha y hora UTC del paso del satélite |
+| `plataforma` | `landsat-8` o `landsat-9` |
+| `st_dn` | Mediana de la banda térmica en DN, **antes** de calibrar (para comprobar la calibración) |
+| `st_c` | Temperatura de superficie calibrada, °C |
+| `verde`, `rojo`, `nir`, `swir1` | Reflectancia calibrada (0 a 1). La roja sube con la turbidez |
+| `ndwi` | NDWI de McFeeters, (verde - NIR) / (verde + NIR). Positivo sobre agua |
+| `ndvi` | NDVI, (NIR - rojo) / (NIR + rojo) |
+| `nubes_escena` | Porcentaje de nubes de la escena completa (`eo:cloud_cover`), no de la ventana |
+| `pixeles_validos` | Fracción (0 a 1) de la ventana que pasó la máscara de calidad |
+| `n_pixeles` | Píxeles de la ventana (círculo de 200 m de radio, píxeles de 30 m) |
+
+- **Método:** para cada punto se carga una ventana de unos 400 m, se enmascara, se calibra y se resume con la **mediana** de los píxeles a 200 m o menos del punto. Si menos de la mitad de la ventana quedó libre de nubes, las variables de esa fecha son `NaN` (la fecha se conserva: no se rellena ni se elimina).
+- **Filtro de escena:** se buscó con menos de 90 % de nubes en la escena; la máscara hace el resto del trabajo.
+- **Limitaciones:** unas 10 a 25 observaciones válidas por año por punto (más desde 2022, cuando se suma Landsat 9), con menos en invierno; la máscara de Landsat deja pasar nubes delgadas y neblina costera, que se miden como agua muy fría. `utils.extremos.controlar_calidad_agua` descarta en el agua las observaciones con reflectancia roja mayor que 0,05 o SWIR1 mayor que 0,02 (demasiado brillo para agua abierta).
+- **Metadatos:** el parquet lleva título, fuente, licencia, parámetros y descripción de columnas dentro del archivo: `utils.series.leer_metadatos_series()`.
+- **Licencia:** dominio público (datos del USGS).
 
 ## Puntos de muestreo
 
