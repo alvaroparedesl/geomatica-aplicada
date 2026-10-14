@@ -256,6 +256,45 @@ class GuionQueFalla(Guion):
         raise self.error
 
 
+class GuionSaturado(Guion):
+    """'LLM' simulado que responde 503 (servicio saturado) las primeras `fallos` veces."""
+
+    def __init__(self, fallos, final="Respuesta tras reintentar"):
+        super().__init__([], final=final)
+        self.fallos, self.intentos = fallos, 0
+
+    def generate_content(self, model, contents, config):
+        self.intentos += 1
+        if self.intentos <= self.fallos:
+            from google.genai import errors
+
+            raise errors.ServerError(503, {"error": {"code": 503, "status": "UNAVAILABLE",
+                                                     "message": "The model is overloaded. Please try again later."}})
+        return super().generate_content(model, contents, config)
+
+
+def test_gemini_saturado_se_reintenta_y_responde(servidor_falso, monkeypatch, capsys):
+    monkeypatch.setattr(ia, "ESPERAS_REINTENTO", (0, 0, 0))
+    g = GuionSaturado(fallos=2)
+    assert correr(g, [servidor_falso]) == "Respuesta tras reintentar"
+    assert g.intentos == 3 and capsys.readouterr().out.count("Gemini está saturado") == 2
+
+
+def test_gemini_saturado_para_siempre_da_un_mensaje_claro(servidor_falso, monkeypatch, capsys):
+    monkeypatch.setattr(ia, "ESPERAS_REINTENTO", (0, 0))
+    g = GuionSaturado(fallos=99)
+    assert correr(g, [servidor_falso]) is None
+    assert g.intentos == 3  # el intento inicial y dos reintentos
+    assert "Gemini sigue saturado" in capsys.readouterr().out
+
+
+def test_un_error_que_no_es_pasajero_no_se_reintenta(servidor_falso, monkeypatch):
+    monkeypatch.setattr(ia, "ESPERAS_REINTENTO", (0, 0))
+    g = GuionQueFalla(RuntimeError("404 modelo inexistente"))
+    with pytest.raises(RuntimeError, match="404"):
+        correr(g, [servidor_falso])
+
+
 def test_error_de_gemini_se_desenvuelve_en_vez_de_un_exceptiongroup(servidor_falso):
     # El error ocurre con la sesión MCP abierta: anyio lo envuelve en un ExceptionGroup que no dice nada.
     with pytest.raises(RuntimeError, match="404 modelo inexistente") as info:

@@ -127,6 +127,7 @@ SERVIDORES: dict[str, dict] = {
 
 MODELO_POR_DEFECTO = "gemini-3.5-flash"  # gratuito en AI Studio (con límites de uso)
 MAX_CARACTERES_RESULTADO = 8000  # lo que se devuelve al modelo por llamada (ahorra cuota)
+ESPERAS_REINTENTO = (3, 6, 12, 20)  # segundos entre reintentos cuando Gemini está saturado (503)
 
 INSTRUCCIONES_BASE = (
     "Eres un asistente que responde preguntas sobre artículos y datasets de repositorios abiertos usando "
@@ -381,6 +382,12 @@ def _limpiar_esquema(esquema):
     return esquema
 
 
+def _es_transitorio(error: BaseException) -> bool:
+    """True si el error de Gemini es pasajero (servicio saturado o caído un momento): vale la pena reintentar."""
+    return (getattr(error, "code", None) in (500, 502, 503, 504)
+            or any(x in str(error) for x in ("UNAVAILABLE", "overloaded", "high demand")))
+
+
 class _Gemini:
     """Bucle de function calling con google-genai (clave de AI Studio). Sin llamada automática:
     así se ve cada paso."""
@@ -398,6 +405,17 @@ class _Gemini:
             cliente = genai.Client(api_key=clave)
         self.cliente = cliente
 
+    async def _generar(self, contenidos, cfg, emit):
+        """Una llamada a Gemini; si el servicio está saturado (503) espera y reintenta."""
+        for espera in (*ESPERAS_REINTENTO, None):
+            try:
+                return self.cliente.models.generate_content(model=self.modelo, contents=contenidos, config=cfg)
+            except Exception as e:  # noqa: BLE001
+                if espera is None or not _es_transitorio(e):
+                    raise
+                emit(f"          (Gemini está saturado en este momento; espero {espera} s y reintento)")
+                await asyncio.sleep(espera)
+
     async def correr(self, pregunta, tools, llamar, max_pasos, emit, instrucciones=INSTRUCCIONES_BASE):
         t = self.types
         decl = [t.FunctionDeclaration(name=x["name"], description=x["description"][:1000],
@@ -409,7 +427,7 @@ class _Gemini:
         )
         contenidos = [t.Content(role="user", parts=[t.Part(text=pregunta)])]
         for paso in range(1, max_pasos + 1):
-            resp = self.cliente.models.generate_content(model=self.modelo, contents=contenidos, config=cfg)
+            resp = await self._generar(contenidos, cfg, emit)
             contenido = resp.candidates[0].content
             contenidos.append(contenido)  # se conserva tal cual (firmas de razonamiento de Gemini 3)
             llamadas = [p.function_call for p in (contenido.parts or []) if p.function_call]
@@ -525,6 +543,11 @@ def preguntar(pregunta: str, servidores=("zenodo", "dataverse"), modelo: str | N
                   "el límite diario se reinicia a medianoche (hora del Pacífico).")
             return None
         hojas = _hojas(e)
+        if any(_es_transitorio(h) for h in hojas):
+            print("Gemini sigue saturado (error 503) después de varios intentos. No es un problema de tu clave ni "
+                  "del cuaderno: es el servicio de Google con mucha demanda. Espera unos minutos y vuelve a "
+                  "ejecutar la celda, o sigue con la demostración del expositor.")
+            return None
         if len(hojas) == 1 and hojas[0] is not e:
             raise hojas[0] from None  # el error real, no el ExceptionGroup que lo envuelve
         raise
