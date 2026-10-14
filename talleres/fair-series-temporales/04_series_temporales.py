@@ -71,21 +71,49 @@ import matplotlib.pyplot as plt
 import numpy as np
 import odc.stac
 import pandas as pd
+import plotly.express as px
 from matplotlib.colors import ListedColormap
 
 # Funciones de apoyo del curso (carpeta utils/)
-from utils.raster import calcular_indices, convertir_a_reflectancia, mascara_calidad_sentinel2, nombres_bandas
+from utils.raster import calcular_indices, mascara_calidad_sentinel2, nombres_bandas
 from utils.series import (BANDAS_SERIES, agregar_nubes_escena, bbox_punto, bbox_puntos, cargar_puntos_csv, cargar_series, cargar_ventanas,
                           construir_series, crs_utm, guardar_series, items_de_punto, leer_metadatos_series,
                           resumen_validez)
-from utils.stac import (agregar_offset, conectar_catalogo, parametros_busqueda, parametros_carga, preparar_items,
-                        renombrar_bandas, resumir_imagenes)
-from utils.viz import graficar_tabla_series, mapa_puntos
+from utils.stac import conectar_catalogo, parametros_busqueda, parametros_carga, preparar_items, resumir_imagenes
+from utils.viz import mapa_puntos
 
 warnings.filterwarnings("ignore", category=UserWarning)  # avisos de GDAL por escenas sin georreferencia
 
 # Una paleta que se distingue bien con daltonismo (Okabe-Ito), una por punto
 PALETA = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9"]
+
+# %% [markdown]
+# ## Dos funciones para pasar de DN a reflectancia
+#
+# En el bloque 3 convertiste a mano una imagen: `reflectancia = DN * 0,0001 + offset`, con el offset según el baseline de la imagen. Aquí hay muchas fechas, cada una con su baseline, así que dejamos esos pasos en dos funciones **escritas aquí mismo**, para que puedas leerlas (y cambiarlas). Sirven solo para Sentinel-2 de Planetary Computer.
+
+# %%
+def agregar_offset(datos, items):
+    # El offset depende del baseline de procesamiento de cada imagen, que está en sus metadatos:
+    # baseline 04.00 o posterior -> -0.1 (a los DN se les sumaron 1000); anterior -> 0
+    offset_por_fecha = {}
+    for item in items:
+        fecha = np.datetime64(item.datetime.replace(tzinfo=None), "ns")
+        baseline = float(item.properties["s2:processing_baseline"])  # "05.11" -> 5.11
+        offset_por_fecha[fecha] = -0.1 if baseline >= 4.0 else 0.0
+    # La fecha de cada capa de `datos` es la de la primera imagen de su grupo: ahí buscamos su offset
+    offsets = [offset_por_fecha[fecha] for fecha in datos["time"].values.astype("datetime64[ns]")]
+    return datos.assign_coords(offset_reflectancia=("time", offsets))
+
+
+def reflectancia_sentinel2(datos):
+    # Convierte antes de combinar fechas (por ejemplo antes de .median("time")): después ya no hay un offset por fecha
+    # reflectancia = DN * 0.0001 + offset de cada fecha (el DN 0 significa "sin dato")
+    refl = datos.where(datos != 0) * 0.0001 + datos["offset_reflectancia"]
+    # Una reflectancia válida está entre 0 y 1: lo demás pasa a NaN
+    refl = refl.where((refl >= 0) & (refl <= 1))
+    return refl.drop_vars("offset_reflectancia")
+
 
 # %% [markdown]
 # ## 1. De una imagen a una serie temporal
@@ -194,8 +222,7 @@ print("Bandas:", bandas)
 parametros_ds = parametros_carga("sentinel-2", bandas, resolucion=10, crs=crs_utm(punto["lon"], punto["lat"]),
                                  catalogo=catalogo, bbox=bbox_p, chunks={"x": 512, "y": 512})
 datos_p = odc.stac.load(items_p, **parametros_ds)  # llamada nativa de odc.stac (perezosa)
-datos_p = renombrar_bandas(datos_p, catalogo)  # B03, B04, B05, B08 y SCL en todos los catálogos
-datos_p = agregar_offset(datos_p, items_p)  # offset de reflectancia de cada fecha
+datos_p = agregar_offset(datos_p, items_p)  # offset de reflectancia de cada fecha (la función de arriba)
 datos_p = agregar_nubes_escena(datos_p, items_p)  # % de nubes de la escena de cada fecha
 print(f"{len(items_p)} imágenes -> {datos_p.sizes['time']} fechas, ventana de {datos_p.sizes['x']} x {datos_p.sizes['y']} píxeles")
 print(f"Tamaño del cubo de este punto: {datos_p.nbytes / 1e6:.1f} MB (todavía sin leer)")
@@ -215,7 +242,7 @@ print(f"Caja completa ({ancho_m / 1000:.0f} x {alto_m / 1000:.0f} km): unos {gb_
 print(f"Seis ventanas de 300 x 300 m: unos {mb_ventanas:.0f} MB")
 
 # %% [markdown]
-# Por eso cargamos ventanas. `cargar_ventanas` repite para **cada** punto exactamente los pasos que acabas de ver (`bbox_punto`, `items_de_punto`, `parametros_carga`, `odc.stac.load`, `renombrar_bandas`, `agregar_offset`, `agregar_nubes_escena`) y al final lee todos los píxeles de una vez, en paralelo. Lanza la celda y espera un par de minutos: es la lectura de red de las seis ventanas.
+# Por eso cargamos ventanas. `cargar_ventanas` repite para **cada** punto exactamente los pasos que acabas de ver (`bbox_punto`, `items_de_punto`, `parametros_carga`, `odc.stac.load`, `agregar_offset`, `agregar_nubes_escena`; usa la versión de `utils`, que hace lo mismo que la tuya) y al final lee todos los píxeles de una vez, en paralelo. Lanza la celda y espera un par de minutos: es la lectura de red de las seis ventanas.
 #
 # > En una prueba anterior (otra zona) las ventanas tardaron 78 s con 313 MB y la caja completa 306 s. Con los puntos de este taller, la lectura de tres meses la medimos más abajo en esta misma celda.
 
@@ -293,14 +320,14 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# **Paso 2: aplicar la máscara y convertir a reflectancia.** Los píxeles inválidos pasan a NaN. Luego `convertir_a_reflectancia` aplica `DN * 0.0001 + offset`, con el offset de **cada fecha** (la coordenada `offset_reflectancia`). Por eso se convierte **antes** de combinar fechas.
+# **Paso 2: aplicar la máscara y convertir a reflectancia.** Los píxeles inválidos pasan a NaN. Luego `reflectancia_sentinel2` aplica `DN * 0.0001 + offset`, con el offset de **cada fecha** (la coordenada `offset_reflectancia`). Por eso se convierte **antes** de combinar fechas.
 #
 # **Paso 3: los índices.** Con la reflectancia calculamos NDWI de McFeeters (agua), NDCI (clorofila), la reflectancia roja B04 (turbidez) y NDVI (vegetación).
 
 # %%
 espectrales = ventana[["B03", "B04", "B05", "B08"]]
 enmascarada = espectrales.where(valida)  # píxeles con nube, sombra, cirrus o sin dato -> NaN
-refl = convertir_a_reflectancia(enmascarada, "sentinel-2")  # DN * 0.0001 + offset de cada fecha
+refl = reflectancia_sentinel2(enmascarada)  # DN * 0.0001 + offset de cada fecha
 indices = calcular_indices(refl, "sentinel-2", ["NDWI_AGUA", "NDCI", "NDVI"])
 indices["B04"] = refl["B04"]
 print("Variables:", list(indices.data_vars))
@@ -470,15 +497,26 @@ print("Diferencia máxima por variable:", diferencia.round(6).to_dict())
 #
 # El respaldo tiene tres filas más, todas del **golfo de Arauco**. Ese punto cae donde se traslapan dos escenas el mismo día. El respaldo se buscó con un filtro de escena de 60 %, así que de cada par entró solo la escena despejada. Nosotros cargamos las dos (límite 100 %) y `nubes_escena` es el **promedio** de ambas, que en esas tres fechas pasa de 60 %. Es un ejemplo de por qué el filtro de escena depende de dónde cae tu punto, no solo del punto.
 #
-# Ahora el gráfico de las cuatro variables, un panel por variable y un color por punto, con `graficar_tabla_series` (de `utils/viz.py`, hecho con `matplotlib`). Los marcadores son las **observaciones** (no hay datos entre ellos).
+# Ahora el gráfico de las cuatro variables con `plotly`: un panel por variable y un color por punto. Los marcadores son las **observaciones** (no hay datos entre ellos). Es interactivo: pasa el mouse sobre un marcador para ver su valor, haz clic en un nombre de la leyenda para ocultar o mostrar un punto, arrastra para acercar y haz doble clic para volver a la vista completa.
 
 # %%
 etiquetas = {"ndwi": "NDWI (agua)", "ndci": "NDCI (clorofila)", "b04": "B04, reflectancia roja (turbidez)", "ndvi": "NDVI (vegetación)"}
-fig, ejes = graficar_tabla_series(respaldo, list(etiquetas), etiquetas=etiquetas, colores=PALETA,
-                                  titulo="Series Sentinel-2 por punto, octubre de 2025 a septiembre de 2026")
+
+# plotly pide una fila por observación y variable ("formato largo"); las fechas sin valor (NaN) se omiten
+largo = respaldo.melt(id_vars=["nombre", "fecha"], value_vars=list(etiquetas), var_name="variable", value_name="valor")
+largo["variable"] = largo["variable"].map(etiquetas)
+largo = largo.dropna(subset=["valor"])
+
+fig = px.line(largo, x="fecha", y="valor", color="nombre", facet_row="variable", markers=True,
+              category_orders={"variable": list(etiquetas.values())}, color_discrete_sequence=PALETA,
+              title="Series Sentinel-2 por punto, octubre de 2025 a septiembre de 2026", height=900,
+              labels={"fecha": "Fecha", "valor": "", "nombre": "Punto"})
+fig.update_yaxes(matches=None)  # cada panel con su propia escala
+fig.for_each_annotation(lambda a: a.update(text=a.text.split("=")[-1]))  # el título de cada panel: "variable=NDWI" -> "NDWI"
+fig.show()
 
 # %% [markdown]
-# **Cómo mirarlo.** El humedal (NDVI alto, NDWI muy negativo) separa tierra de agua. Entre los puntos de agua, la pluma del Biobío tiene la mediana de reflectancia roja más alta. En el bloque 5 medimos todo esto con números; en el 6 lo hacemos interactivo.
+# **Cómo mirarlo.** El humedal (NDVI alto, NDWI muy negativo) separa tierra de agua. Entre los puntos de agua, la pluma del Biobío tiene la mediana de reflectancia roja más alta. En el bloque 5 medimos todo esto con números; en el 6 hacemos más gráficos interactivos.
 #
 # **Tu turno 4.** Con la serie de respaldo: ¿qué punto tiene menos fechas válidas de NDWI? ¿Qué mes tiene menos fechas en total entre los seis puntos? Usa `resumen_validez(respaldo)` y `respaldo.groupby(respaldo["fecha"].dt.to_period("M")).size()`.
 
