@@ -145,14 +145,13 @@ print(f"Sin el offset de -0,2, la reflectancia roja sería {float((crudo['red'] 
 print(f"Con DN * 0,00341802 y sin sumar 149, la temperatura sería {float((dn_termico * 0.00341802).median() - 273.15):.0f} °C")
 
 # %% [markdown]
-# El offset de la reflectancia (-0,2) es **mayor que la reflectancia misma del agua**, así que olvidarlo da valores absurdos. Por eso en el curso la calibración vive en funciones de `utils.raster`. Comprobemos que hacen lo mismo que nuestra cuenta manual:
+# El offset de la reflectancia (-0,2) es **mayor que la reflectancia misma del agua**, así que olvidarlo da valores absurdos. Por eso la reflectancia se calibra siempre con la fórmula de arriba (`DN * 0,0000275 - 0,2`), y para la temperatura el curso tiene la función `convertir_a_temperatura` en `utils.raster`. Comprobemos que hace lo mismo que nuestra cuenta manual:
 
 # %%
-from utils.raster import convertir_a_reflectancia, convertir_a_temperatura
+from utils.raster import convertir_a_temperatura
 
 dif_temperatura = float(np.abs(convertir_a_temperatura(dn_termico) - celsius).max())
-dif_reflectancia = float(np.abs(convertir_a_reflectancia(crudo["red"], "landsat") - reflectancia_roja).max())
-print(f"Diferencia con la calibración manual: temperatura {dif_temperatura:.1e} °C, reflectancia {dif_reflectancia:.1e}")
+print(f"Diferencia con la calibración manual de la temperatura: {dif_temperatura:.1e} °C")
 
 # %% [markdown]
 # ### 1.2 La tabla preparada del taller
