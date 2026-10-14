@@ -245,6 +245,54 @@ def test_max_pasos(servidor_falso):
     assert g.n == 2
 
 
+class GuionQueFalla(Guion):
+    """'LLM' simulado cuya llamada a la API falla, como una cuota agotada o un modelo inexistente."""
+
+    def __init__(self, error):
+        super().__init__([])
+        self.error = error
+
+    def generate_content(self, model, contents, config):
+        raise self.error
+
+
+def test_error_de_gemini_se_desenvuelve_en_vez_de_un_exceptiongroup(servidor_falso):
+    # El error ocurre con la sesión MCP abierta: anyio lo envuelve en un ExceptionGroup que no dice nada.
+    with pytest.raises(RuntimeError, match="404 modelo inexistente") as info:
+        correr(GuionQueFalla(RuntimeError("404 modelo inexistente")), [servidor_falso])
+    assert not isinstance(info.value, BaseExceptionGroup)
+
+
+def test_cuota_agotada_de_gemini_se_reconoce_aunque_venga_envuelta(servidor_falso, capsys):
+    g = GuionQueFalla(RuntimeError("429 RESOURCE_EXHAUSTED: cuota"))
+    assert correr(g, [servidor_falso]) is None
+    assert "Cuota gratuita agotada" in capsys.readouterr().out
+
+
+def test_mensaje_de_error_muestra_la_causa_real_de_un_grupo():
+    grupo = ExceptionGroup("unhandled errors in a TaskGroup", [ValueError("uno"), ExceptionGroup("g", [KeyError("dos")])])
+    texto = ia.mensaje_de_error(grupo)
+    assert "ValueError: uno" in texto and "KeyError" in texto and "TaskGroup" not in texto
+    assert ia.mensaje_de_error(RuntimeError("solo")) == "RuntimeError: solo"
+
+
+def test_servidor_local_funciona_aunque_stderr_no_sea_un_archivo(servidor_falso):
+    # En Jupyter y Colab sys.stderr no tiene descriptor de archivo (fileno() lanza UnsupportedOperation) y el
+    # cliente MCP toma sys.stderr al importarse. Se reproduce en un intérprete nuevo que lo cambia antes de importar.
+    import subprocess
+
+    codigo = (
+        "import io, sys\n"
+        "sys.stderr = io.StringIO()\n"
+        f"sys.path.insert(0, {str(Path(ia.__file__).parent.parent)!r})\n"
+        "from utils import ia\n"
+        f"ia.SERVIDORES['falso'] = {{'comando': [sys.executable, {str(FALSO)!r}], 'tools': None, 'nota': 'x'}}\n"
+        "print(ia.usar('falso', 'falso_buscar', mostrar=False, query='x'))\n"
+    )
+    r = subprocess.run([sys.executable, "-I", "-c", codigo], capture_output=True, text=True, timeout=60)
+    assert "Total: 3" in r.stdout, r.stdout + r.stderr
+
+
 # ---------------------------------------------------------------------------
 # Con red: servidores reales (marca `red`)
 # ---------------------------------------------------------------------------

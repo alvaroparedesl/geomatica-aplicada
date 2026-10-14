@@ -228,6 +228,35 @@ def _importar_mcp():
     return Sesion, http_client, StdioServerParameters, stdio_client
 
 
+@contextlib.contextmanager
+def _stderr_valido():
+    """Un destino para los mensajes de error de un servidor local (subproceso).
+
+    El subproceso necesita un archivo de verdad. En Jupyter y Colab `sys.stderr` no lo es
+    (`fileno()` lanza `UnsupportedOperation`), y entonces se descartan esos mensajes."""
+    try:
+        sys.stderr.fileno()
+    except Exception:  # noqa: BLE001
+        with open(os.devnull, "w") as vacio:
+            yield vacio
+    else:
+        yield sys.stderr
+
+
+def _hojas(error: BaseException) -> list[BaseException]:
+    """Las excepciones de verdad dentro de un `ExceptionGroup` (anyio envuelve así cualquier error
+    que ocurre con una sesión MCP abierta, y el grupo por sí solo no dice qué pasó)."""
+    if isinstance(error, BaseExceptionGroup):
+        return [h for sub in error.exceptions for h in _hojas(sub)]
+    return [error]
+
+
+def mensaje_de_error(error: BaseException, largo: int = 300) -> str:
+    """Texto corto con la causa real de un error, desenvolviendo los `ExceptionGroup`."""
+    texto = "; ".join(f"{type(h).__name__}: {h}" for h in _hojas(error))
+    return texto if len(texto) <= largo else texto[:largo] + "..."
+
+
 @contextlib.asynccontextmanager
 async def _conectar(cfg: dict):
     """Abre una sesión MCP con un servidor remoto (url) o local (comando, por stdio)."""
@@ -235,7 +264,8 @@ async def _conectar(cfg: dict):
     async with contextlib.AsyncExitStack() as stack:
         if cfg.get("comando"):
             comando, *args = cfg["comando"]
-            flujos = await stack.enter_async_context(stdio_client(Params(command=comando, args=args)))
+            flujos = await stack.enter_async_context(
+                stdio_client(Params(command=comando, args=args), errlog=stack.enter_context(_stderr_valido())))
         else:
             flujos = await stack.enter_async_context(http_client(cfg["url"]))
         sesion = await stack.enter_async_context(Sesion(flujos[0], flujos[1]))
@@ -489,10 +519,14 @@ def preguntar(pregunta: str, servidores=("zenodo", "dataverse"), modelo: str | N
     try:
         respuesta = _correr(_ir(), print)
     except Exception as e:
-        if "429" in str(e) or "RESOURCE_EXHAUSTED" in str(e):
+        causas = mensaje_de_error(e, largo=2000)
+        if "429" in causas or "RESOURCE_EXHAUSTED" in causas:
             print("Cuota gratuita agotada (error 429). Espera un minuto o reduce la pregunta; "
                   "el límite diario se reinicia a medianoche (hora del Pacífico).")
             return None
+        hojas = _hojas(e)
+        if len(hojas) == 1 and hojas[0] is not e:
+            raise hojas[0] from None  # el error real, no el ExceptionGroup que lo envuelve
         raise
     print("\n=== Respuesta ===\n" + (respuesta or ""))
     if llamadas:
