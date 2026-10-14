@@ -171,7 +171,7 @@ else:
 
 # %%
 # @title Cargar las funciones de utils.ia
-from utils.ia import SERVIDORES, herramientas, preguntar, usar
+from utils.ia import SERVIDORES, herramientas, mensaje_de_error, preguntar, usar
 
 
 def intentar(funcion, *args, **kwargs):
@@ -181,8 +181,9 @@ def intentar(funcion, *args, **kwargs):
             return funcion(*args, **kwargs)
         except Exception as error:  # noqa: BLE001
             if intento == 2:
-                print(f"El servidor no respondió ({type(error).__name__}). Es un servicio público compartido: "
-                      "espera un minuto y vuelve a ejecutar la celda, o sigue con la demostración del expositor.")
+                print(f"No hubo respuesta ({mensaje_de_error(error)}).\n"
+                      "Los servidores son servicios públicos compartidos: espera un minuto y vuelve a ejecutar la celda, "
+                      "o sigue con la demostración del expositor.")
 
 
 print("Servidores disponibles:", ", ".join(SERVIDORES))
