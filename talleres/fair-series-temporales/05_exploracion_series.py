@@ -17,7 +17,7 @@
 # | 4 | Tendencia lineal, y qué puede decir un solo año | 15 |
 # | 5 | Patrones estacionales | 10 |
 # | 6 | Anomalías con un año de datos (z-score) | 15 |
-# | 7 | Puente al bloque 7: climatología y anomalías bien hechas con OISST | 10 |
+# | 7 | Puente al bloque 7: climatología y anomalías bien hechas con Landsat | 10 |
 # | 8 | Interpretación: pluma del Biobío, clorofila en la bahía y humedal | 5 |
 
 # %% [markdown]
@@ -47,7 +47,7 @@ import numpy as np
 import pandas as pd
 
 # Funciones de apoyo del curso (carpeta utils/)
-from utils.extremos import cargar_oisst
+from utils.extremos import cargar_landsat, controlar_calidad_agua, serie_landsat
 from utils.series import (anomalias_zscore, cargar_series, climatologia_mensual, leer_metadatos_series, resumen_validez,
                           rolling_media, serie_de_punto, tendencia_lineal)
 
@@ -353,63 +353,65 @@ tabla[(tabla["id"] == "golfo_arauco") & (tabla["fecha"] == fecha_max)][["fecha",
 # z_ndci[z_ndci.abs() > 2]
 
 # %% [markdown]
-# ## 7. Puente al bloque 7: climatología y anomalías bien hechas con OISST
+# ## 7. Puente al bloque 7: climatología y anomalías bien hechas con Landsat
 #
-# Para hacer anomalías **con respecto a una climatología mensual de verdad** se necesita una serie larga. La temperatura superficial del mar de NOAA OISST (el píxel frente a Concepción) tiene **datos diarios desde 1981**. Esa es la serie con la que trabajaremos en el bloque 7.
+# Para hacer anomalías **con respecto a una climatología mensual de verdad** se necesita una serie larga. La temperatura de superficie de **Landsat 8 y 9** en el centro de la bahía de Concepción tiene datos desde **2013**: unas 10 a 25 observaciones válidas por año (Landsat pasa cada 8 días, pero las nubes borran muchas fechas). Esa es la serie con la que trabajaremos en el bloque 7.
 #
-# `cargar_oisst("punto")` devuelve la serie diaria completa. Los días sin dato (hay un vacío de 2024-06-20 a 2026-03-05) quedan como NaN: no se rellenan.
+# `cargar_landsat()` entrega la tabla de series (igual que tu parquet de Sentinel-2, pero con temperatura y reflectancia ya calibradas), `controlar_calidad_agua` descarta las observaciones que la reflectancia delata como nube y `serie_landsat` saca la serie de un punto. Las fechas con nubes quedan como NaN: no se rellenan.
 
 # %%
-sst = cargar_oisst("punto")
-print(f"{len(sst)} días, {sst.index.min():%Y-%m-%d} a {sst.index.max():%Y-%m-%d}; sin dato: {int(sst.isna().sum())} días")
-sst.tail(3)
+st = serie_landsat(controlar_calidad_agua(cargar_landsat()), "bahia_concepcion")
+print(f"{len(st)} pasos del satélite, {st.notna().sum()} con dato; {st.index.min():%Y-%m-%d} a {st.index.max():%Y-%m-%d}")
+st.dropna().tail(3)
 
 # %% [markdown]
-# La climatología mensual con la base de referencia estándar (1991 a 2020, 30 años) tiene **cientos de observaciones en cada mes**, no unas pocas:
+# La climatología mensual con la base 2013 a 2024 (12 años completos) tiene **9 a 20 observaciones en cada mes**: bastante más que la de un solo año (2 a 11), pero lejos de las cientos de observaciones de una serie diaria de 30 años. Hay que tenerlo presente al interpretar.
 
 # %%
-clima_sst = climatologia_mensual(sst.dropna(), base=(1991, 2020))
-print("Observaciones por mes en la base 1991-2020:", int(clima_sst["n"].min()), "a", int(clima_sst["n"].max()))
+clima_st = climatologia_mensual(st.dropna(), base=(2013, 2024))
+print("Observaciones por mes en la base 2013-2024:", int(clima_st["n"].min()), "a", int(clima_st["n"].max()))
 
 fig, eje = plt.subplots(figsize=(8, 3.6))
-eje.fill_between(range(1, 13), clima_sst["media"] - clima_sst["desv"], clima_sst["media"] + clima_sst["desv"], alpha=0.25, color="#0072B2")
-eje.plot(range(1, 13), clima_sst["media"], "o-", color="#0072B2")
+eje.fill_between(range(1, 13), clima_st["media"] - clima_st["desv"], clima_st["media"] + clima_st["desv"], alpha=0.25, color="#0072B2")
+eje.plot(range(1, 13), clima_st["media"], "o-", color="#0072B2")
 eje.set_xticks(range(1, 13), labels=["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"])
-eje.set_ylabel("TSM (°C)")
-eje.set_title("Climatología mensual de la TSM frente a Concepción, 1991-2020 (± 1 desviación)")
+eje.set_ylabel("temperatura de superficie (°C)")
+eje.set_title("Climatología mensual de la bahía de Concepción, 2013-2024 (± 1 desviación)")
 eje.grid(alpha=0.3)
 plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# Ahora sí funciona `referencia="mes"`: el z-score compara cada día con el mismo mes de los 30 años de la base. Mostramos el promedio mensual de esas anomalías desde 2015. Las barras que faltan son el vacío de datos de OISST: **un vacío no es "anomalía cero"**, es un vacío.
+# Ahora sí funciona `referencia="mes"`: el z-score compara cada observación con el mismo mes de los 12 años de la base. Mostramos el promedio mensual de esas anomalías desde 2022. Los meses **sin barra** no tienen ninguna observación sin nubes: **un mes sin dato no es "anomalía cero"**, es un vacío.
 
 # %%
-z_sst = anomalias_zscore(sst, referencia="mes", base=(1991, 2020))
-z_mensual = z_sst["2015":].resample("MS").mean()
+z_st = anomalias_zscore(st, referencia="mes", base=(2013, 2024))
+z_mensual = z_st["2022":].resample("MS").mean()
 
 fig, eje = plt.subplots(figsize=(11, 3.6))
-eje.bar(z_mensual.index, z_mensual, width=25, color=np.where(z_mensual >= 0, "#D55E00", "#0072B2"))
-eje.axvspan(pd.Timestamp("2024-06-20"), pd.Timestamp("2026-03-05"), color="0.85", label="sin datos (vacío de OISST en Planetary Computer)")
+eje.bar(z_mensual.index, z_mensual.fillna(0), width=25, color=np.where(z_mensual.fillna(0) >= 0, "#D55E00", "#0072B2"))
+for mes in z_mensual.index[z_mensual.isna()]:
+    eje.axvspan(mes, mes + pd.offsets.MonthBegin(1), color="0.85", label="mes sin observación válida")
+manijas, nombres = eje.get_legend_handles_labels()
+eje.legend(dict(zip(nombres, manijas)).values(), dict(zip(nombres, manijas)).keys(), fontsize=8, loc="upper left")
 eje.axhline(0, color="k", linewidth=0.7)
 eje.set_ylabel("anomalía mensual (z)")
-eje.set_title("TSM frente a Concepción: anomalía respecto de la climatología 1991-2020")
-eje.legend(fontsize=8, loc="upper left")
+eje.set_title("Temperatura de superficie en la bahía: anomalía respecto de la climatología 2013-2024")
 eje.grid(alpha=0.3)
 plt.tight_layout()
 plt.show()
 
-print("Anomalía media mensual reciente (z):")
-print(z_mensual["2026-03":].round(2).to_string())
+print("Anomalía media mensual reciente (z), NaN = sin observación válida:")
+print(z_mensual["2026-01":].round(2).to_string())
 
 # %% [markdown]
-# Los meses más recientes (agosto y septiembre de 2026) tienen anomalías positivas, y eso se parece a una **ola de calor marina** en curso. Una media mensual no es un evento: no dice cuántos días seguidos, ni qué tan intensa fue. Eso se define con un método (umbral, duración mínima, unión de brechas) y es lo que hacemos en el bloque 7 sobre esta misma serie.
+# Los meses más recientes con dato son **más fríos en mayo de 2026** (z de -0,9) y **más cálidos en septiembre de 2026** (z de +0,9). Una media mensual no es un episodio: no dice cuántas observaciones seguidas, ni si hay una nube que se coló. Con unas 1 o 2 observaciones por mes, un solo dato mueve el promedio. Eso se define con un método (umbral, observaciones seguidas, brecha máxima) y es lo que hacemos en el bloque 7 sobre esta misma serie.
 #
-# **Tu turno 6.** Calcula la anomalía mensual de otro período (por ejemplo `"1995":"2000"`). ¿Aparecen los años 1997 y 1998 (El Niño)? ¿Y 2015-2016? Cambia también la base a `(1981, 2010)` y compara.
+# **Tu turno 6.** Calcula la anomalía mensual de otro período (por ejemplo `"2014":"2017"`). ¿Hay anomalías positivas en 2015 y 2016, años de un El Niño fuerte? Cambia también la base a `(2013, 2018)` y compara cuánto cambian los z.
 
 # %%
 # Tu turno 6
-# z_sst["1995":"2000"].resample("MS").mean().plot(kind="bar", figsize=(11, 3))
+# z_st["2014":"2017"].resample("MS").mean().plot(kind="bar", figsize=(11, 3))
 
 # %% [markdown]
 # ## 8. Interpretación

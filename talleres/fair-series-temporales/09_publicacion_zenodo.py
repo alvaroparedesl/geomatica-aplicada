@@ -48,10 +48,10 @@ sys.path.insert(0, str(RAIZ))
 # | Minuto | Qué cuentas | Apoyo |
 # |---|---|---|
 # | 0:00 a 0:30 | **La pregunta.** ¿Qué fenómeno ambiental miraste y por qué importa? Una frase | Un mapa con tus puntos o tu zona |
-# | 0:30 a 1:30 | **Los datos.** ¿De dónde salen (STAC, OISST), qué periodo, qué resolución, qué limitaciones? | La tabla de tu serie o su metadato |
+# | 0:30 a 1:30 | **Los datos.** ¿De dónde salen (STAC, Landsat o Sentinel-2), qué periodo, qué resolución, qué limitaciones? | La tabla de tu serie o su metadato |
 # | 1:30 a 3:00 | **El método.** Qué hiciste con los datos, en 3 pasos (por ejemplo: máscara de nubes, serie por punto, anomalías o eventos) | Un esquema simple o el código clave, no todo el cuaderno |
 # | 3:00 a 4:30 | **El resultado principal.** Un solo gráfico, bien explicado: qué se ve y qué significa | **Un** gráfico, con título y ejes legibles |
-# | 4:30 a 5:30 | **Lo que no sabes.** Una limitación o una sorpresa (por ejemplo, el vacío de OISST, las nubes de Sentinel-2) y cómo la trataste | Una frase honesta |
+# | 4:30 a 5:30 | **Lo que no sabes.** Una limitación o una sorpresa (por ejemplo, las nubes de Landsat y Sentinel-2, o la resolución de la banda térmica) y cómo la trataste | Una frase honesta |
 # | 5:30 a 6:00 | **Reproducibilidad.** El enlace a tu repositorio y qué metadatos tiene tu depósito | La URL de GitHub y el DOI (que obtendrás en este cuaderno) |
 #
 # ### Consejos
@@ -149,7 +149,7 @@ else:
 # 1. **Tu cuaderno** (`.ipynb`): el análisis completo.
 # 2. **Tu parquet de datos derivados**: la tabla que produjiste, con sus metadatos dentro del archivo.
 #
-# Para que el cuaderno funcione para todo el grupo, por defecto usa el cuaderno del bloque 7 y su tabla de **olas de calor y de frío marinas** (`eventos_oisst_concepcion.parquet`; si no la guardaste, se genera aquí en pocos segundos). **Cámbialos por los tuyos**: la ruta de tu cuaderno (el que subiste a GitHub en el bloque 8) y la de tu parquet (por ejemplo, la serie de Sentinel-2 del bloque 4). Si cambias los archivos, cambia también la descripción de la sección 5: debe decir lo que realmente subes.
+# Para que el cuaderno funcione para todo el grupo, por defecto usa el cuaderno del bloque 7 y su tabla de **episodios cálidos y fríos de la temperatura de superficie** (`episodios_landsat_concepcion.parquet`; si no la guardaste, se genera aquí en pocos segundos). **Cámbialos por los tuyos**: la ruta de tu cuaderno (el que subiste a GitHub en el bloque 8) y la de tu parquet (por ejemplo, la serie de Sentinel-2 del bloque 4). Si cambias los archivos, cambia también la descripción de la sección 5: debe decir lo que realmente subes.
 
 # %%
 # @title Qué archivos subir y quién eres (cámbialos por los tuyos)
@@ -157,27 +157,25 @@ import tempfile
 
 import pandas as pd
 
-from utils.extremos import cargar_oisst, climatologia_hobday, detectar_eventos
+from utils.extremos import cargar_landsat, controlar_calidad_agua, episodios_por_punto
 from utils.series import guardar_series, leer_metadatos_series
 
 CARPETA = Path(tempfile.mkdtemp(prefix="zenodo_"))      # carpeta de trabajo temporal: aquí van las copias
 SALIDAS_BLOQUE7 = Path("/content/salidas") if "google.colab" in sys.modules else Path(tempfile.gettempdir()) / "salidas_taller"
 
 RUTA_CUADERNO = RAIZ / "talleres" / "fair-series-temporales" / "07_eventos_extremos.ipynb"   # cambia por tu cuaderno
-RUTA_PARQUET = SALIDAS_BLOQUE7 / "eventos_oisst_concepcion.parquet"                            # cambia por tu parquet
+RUTA_PARQUET = SALIDAS_BLOQUE7 / "episodios_landsat_concepcion.parquet"                        # cambia por tu parquet
 
 if not RUTA_PARQUET.exists():     # no ejecutaste el bloque 7 en esta sesión: lo generamos con las mismas funciones
-    sst = cargar_oisst("punto")
-    clima = climatologia_hobday(sst)
-    eventos = [detectar_eventos(sst, clima, tipo) for tipo in ("calor", "frio")]
-    RUTA_PARQUET = CARPETA / "eventos_oisst_concepcion.parquet"
-    guardar_series(pd.concat(eventos, ignore_index=True), RUTA_PARQUET, metadatos={
-        "titulo": "Olas de calor y de frío marinas frente a Concepción (Hobday, OISST 1981-2026)",
-        "fuente": "NOAA OISST v2.1 leído desde Microsoft Planetary Computer, píxel -36.875 / -73.375",
-        "licencia": "Dominio público (datos de NOAA)",
-        "periodo": "1981-09-01 a 2026-09-24",
-        "metodo": "Hobday et al. 2016 y 2018; utils/extremos.py",
-        "vacios": "2024-06-20 a 2026-03-05 y 2026-03-07/08 sin dato en Planetary Computer; no se rellenaron",
+    episodios = episodios_por_punto(controlar_calidad_agua(cargar_landsat()), tipos=["bahia", "pluma", "golfo", "laguna"])
+    RUTA_PARQUET = CARPETA / "episodios_landsat_concepcion.parquet"
+    guardar_series(episodios, RUTA_PARQUET, metadatos={
+        "titulo": "Episodios cálidos y fríos de la temperatura de superficie en el agua de la bahía de Concepción y alrededores (Landsat 8 y 9, 2013-2026)",
+        "fuente": "USGS Landsat 8 y 9 Collection 2 Level-2 leído desde Microsoft Planetary Computer; cinco puntos de agua",
+        "licencia": "Dominio público (datos del USGS)",
+        "periodo": "2013-03-28 a 2026-10-08",
+        "metodo": "Anomalías respecto de una climatología por ventana de días (2013-2024); utils/extremos.py",
+        "limitaciones": "Landsat pasa cada 8 días y las nubes borran muchas fechas; no se interpoló",
     })
 
 AUTOR_NOMBRE = "Apellido, Nombre"            # @param {type:"string"}  (formato "Apellido, Nombre")
@@ -203,7 +201,7 @@ for ruta in (RUTA_CUADERNO, RUTA_PARQUET):
 
 # %%
 meta_parquet = leer_metadatos_series(RUTA_PARQUET)
-for clave in ("titulo", "fuente", "licencia", "periodo", "vacios"):
+for clave in ("titulo", "fuente", "licencia", "periodo", "limitaciones"):
     print(f"{clave:9s}: {meta_parquet.get(clave, '(no consta)')}")
 
 # %% [markdown]
@@ -225,44 +223,47 @@ for clave in ("titulo", "fuente", "licencia", "periodo", "vacios"):
 #
 # ### Licencia
 #
-# Elegimos **CC BY 4.0**: cualquiera puede reutilizar tu material con la condición de que te cite. Los datos de origen (NOAA OISST) son de dominio público. Si publicas **código**, suele usarse una licencia de software (GPL, MIT); para un registro mixto de cuaderno y datos, CC BY es habitual.
+# Elegimos **CC BY 4.0**: cualquiera puede reutilizar tu material con la condición de que te cite. Los datos de origen (USGS Landsat) son de dominio público. Si publicas **código**, suele usarse una licencia de software (GPL, MIT); para un registro mixto de cuaderno y datos, CC BY es habitual.
 #
 # ### Identificadores relacionados
 #
-# La relación `isDerivedFrom` ("deriva de") apunta a la **fuente**; `cites` a los artículos del método (Hobday 2016) y del producto OISST (Huang 2021); `isSupplementedBy` ("está complementado por") al código en GitHub. Así cualquiera puede seguir la cadena de procedencia: de tu dato a su fuente.
+# La relación `isDerivedFrom` ("deriva de") apunta a la **fuente**; `cites` al producto Landsat Collection 2 Level-2 del USGS y al artículo que describe su temperatura de superficie (Malakar et al. 2018); `isSupplementedBy` ("está complementado por") al código en GitHub. Así cualquiera puede seguir la cadena de procedencia: de tu dato a su fuente.
 
 # %%
 import json
 from datetime import date
 
-PERIODO = meta_parquet.get("periodo", "1981-09-01 a 2026-09-24")
+PERIODO = meta_parquet.get("periodo", "2013-03-01 a 2026-10-13")
+TABLA_EPISODIOS = pd.read_parquet(RUTA_PARQUET)
+N_CALOR, N_FRIO = int((TABLA_EPISODIOS["tipo"] == "calor").sum()), int((TABLA_EPISODIOS["tipo"] == "frio").sum())
 
 
-def construir_metadatos(nombre, afiliacion, orcid, usuario_github, repo_github, periodo):
+def construir_metadatos(nombre, afiliacion, orcid, usuario_github, repo_github, periodo, n_calor, n_frio):
     """El diccionario de metadatos de Zenodo (API REST de depósitos)."""
     descripcion = (
         "<p>Cuaderno de análisis y tabla de datos derivados del taller <em>Datos FAIR, series temporales satelitales y "
-        "detección de anomalías con Python</em>. Contiene las <strong>olas de calor y de frío marinas</strong> detectadas "
-        "con el método de Hobday et al. (2016) en la temperatura superficial del mar (NOAA OISST v2.1) del píxel frente a "
-        "Concepción, región del Biobío, Chile: 88 olas de calor y 111 de frío, con su fecha de inicio y fin, duración, "
-        "intensidad y categoría (Hobday et al. 2018).</p>"
-        f"<p>Periodo: {periodo}. Climatología de referencia 1991-2020, ventana de 11 días, percentiles 90 y 10, "
-        "duración mínima de 5 días y unión de eventos separados por 2 días o menos. El resultado se validó contra la "
-        "implementación <code>xmhw</code>.</p>"
-        "<p>Limitaciones: la fuente (Microsoft Planetary Computer) no tiene datos entre 2024-06-20 y 2026-03-05 ni los días "
-        "2026-03-07 y 2026-03-08; el vacío no se rellenó, y en él no se pueden detectar eventos. El píxel de OISST "
-        "(0,25 grados) no resuelve el interior de la bahía de Concepción.</p>"
-        "<p>Datos de NOAA, de dominio público.</p>"
+        "detección de anomalías con Python</em>. Contiene los <strong>episodios cálidos y fríos</strong> de la temperatura "
+        "de superficie (banda térmica de Landsat 8 y 9, calibrada a °C) en cinco puntos de agua de la bahía de Concepción, el "
+        f"golfo de Arauco y la laguna Grande de San Pedro, región del Biobío, Chile: {n_calor} episodios cálidos y {n_frio} fríos, "
+        "con su fecha de inicio y fin, duración mínima, número de observaciones e intensidad.</p>"
+        f"<p>Periodo: {periodo}. Climatología de referencia 2013-2024 con una ventana de 15 días a cada lado y percentiles "
+        "90 y 10. Un episodio son al menos 2 observaciones válidas consecutivas sobre el percentil 90 (o bajo el 10), "
+        "separadas por 24 días o menos. No es el método de Hobday et al. (2016), que exige una serie diaria sin huecos: "
+        "aquí la duración es solo una cota mínima.</p>"
+        "<p>Limitaciones: Landsat pasa cada 8 días con sus dos satélites y las nubes borran muchas fechas (unas decenas "
+        "de observaciones válidas al año); no se interpoló. La banda térmica tiene 100 m nativos y la temperatura de "
+        "superficie del USGS mide la temperatura de la piel de la superficie (errores de 1 K o más) y no es un producto oceanográfico.</p>"
+        "<p>Datos del USGS, de dominio público.</p>"
     )
     return {
         "upload_type": "dataset",
-        "title": "Olas de calor y de frío marinas frente a Concepción (Biobío, Chile), 1981-2026: tabla de eventos y cuaderno",
+        "title": "Episodios cálidos y fríos de la temperatura de superficie en el agua de la bahía de Concepción y alrededores (Biobío, Chile), Landsat 8 y 9, 2013-2026: tabla y cuaderno",
         "description": descripcion,
         "creators": [{"name": nombre, "affiliation": afiliacion, "orcid": orcid}],
         "keywords": [
-            "ola de calor marina", "ola de frío marina", "temperatura superficial del mar", "eventos extremos",
-            "series temporales", "Concepción", "Biobío", "Biobio", "Chile", "OISST", "Hobday", "FAIR",
-            "marine heatwave", "marine cold spell", "sea surface temperature", "extreme events", "time series",
+            "temperatura de superficie", "episodios extremos", "anomalías", "series temporales", "Concepción", "Biobío",
+            "Biobio", "Chile", "Landsat", "teledetección", "FAIR",
+            "land surface temperature", "surface temperature", "extreme events", "anomalies", "time series", "remote sensing",
         ],
         "license": "cc-by-4.0",
         "language": "spa",
@@ -270,20 +271,20 @@ def construir_metadatos(nombre, afiliacion, orcid, usuario_github, repo_github, 
         "version": "1.0.0",
         "publication_date": date.today().isoformat(),
         "locations": [
-            {"place": "Concepción, Región del Biobío, Chile", "lat": -36.875, "lon": -73.375},
+            {"place": "Bahía de Concepción y golfo de Arauco, Región del Biobío, Chile", "lat": -36.8, "lon": -73.1},
         ],
         "related_identifiers": [
-            {"identifier": "https://planetarycomputer.microsoft.com/dataset/noaa-cdr-sea-surface-temperature-optimum-interpolation",
+            {"identifier": "https://planetarycomputer.microsoft.com/dataset/landsat-c2-l2",
              "relation": "isDerivedFrom", "resource_type": "dataset"},
-            {"identifier": "10.1175/JCLI-D-20-0166.1", "relation": "cites", "resource_type": "publication-article"},
-            {"identifier": "10.1016/j.pocean.2015.12.014", "relation": "cites", "resource_type": "publication-article"},
+            {"identifier": "10.5066/P9OGBGM6", "relation": "cites", "resource_type": "dataset"},
+            {"identifier": "10.1109/TGRS.2018.2824828", "relation": "cites", "resource_type": "publication-article"},
             {"identifier": f"https://github.com/{usuario_github}/{repo_github}",
              "relation": "isSupplementedBy", "resource_type": "software"},
         ],
     }
 
 
-metadatos = construir_metadatos(AUTOR_NOMBRE, AUTOR_AFILIACION, AUTOR_ORCID, USUARIO_GITHUB, REPO_GITHUB, PERIODO)
+metadatos = construir_metadatos(AUTOR_NOMBRE, AUTOR_AFILIACION, AUTOR_ORCID, USUARIO_GITHUB, REPO_GITHUB, PERIODO, N_CALOR, N_FRIO)
 print(json.dumps(metadatos, ensure_ascii=False, indent=2)[:2400], "\n...")
 
 # %% [markdown]
@@ -325,7 +326,7 @@ def validar_metadatos(m):
         avisos.append("menos de 5 palabras clave")
     if not any(re.search(r"[áéíóúñ]", k.lower()) or k.lower() in {"chile", "series temporales"} for k in m.get("keywords", [])):
         avisos.append("no veo palabras clave en español")
-    if not any(k.lower() in {"time series", "sea surface temperature", "marine heatwave"} for k in m.get("keywords", [])):
+    if not any(k.lower() in {"time series", "surface temperature", "land surface temperature", "remote sensing"} for k in m.get("keywords", [])):
         avisos.append("no veo palabras clave en inglés")
     if not m.get("locations"):
         avisos.append("sin 'locations': la búsqueda por lugar no encontrará este registro")
@@ -356,12 +357,12 @@ def preguntas_de_busqueda(m):
     return {
         "¿Dónde es? (lugar)": bool(m.get("locations")),
         "¿Qué periodo cubre?": bool(re.search(r"20\d\d", m["description"])),
-        "¿Qué se midió y con qué producto?": "oisst" in texto and "temperatura superficial del mar" in texto,
+        "¿Qué se midió y con qué producto?": "landsat" in texto and "temperatura de superficie" in texto,
         "¿De dónde vienen los datos? (fuente)": any(r["relation"] == "isDerivedFrom" for r in m.get("related_identifiers", [])),
         "¿Con qué licencia puedo reutilizarlo?": bool(m.get("license")),
         "¿Quién es la autoría y cómo la identifico? (ORCID)": all(c.get("orcid") for c in m["creators"]),
         "¿Aparece buscando 'Biobío' y 'Biobio'?": "biobío" in texto and "biobio" in texto,
-        "¿Aparece buscando en inglés?": "sea surface temperature" in texto or "marine heatwave" in texto,
+        "¿Aparece buscando en inglés?": "surface temperature" in texto or "time series" in texto,
     }
 
 
@@ -374,7 +375,7 @@ for pregunta, responde in preguntas_de_busqueda(metadatos).items():
 # Cada "NO CONSTA" es una pregunta que una persona (o una IA) no podrá responder sobre tu registro. Edita la función `construir_metadatos` o el diccionario `metadatos` para que:
 #
 # 1. Tus datos de autoría (nombre, ORCID, afiliación) sean los **tuyos**.
-# 2. La **descripción** diga qué hay en **tu** parquet (tus puntos, tu periodo, tus variables) y una **limitación** de tus datos, como hicimos aquí con el vacío de OISST.
+# 2. La **descripción** diga qué hay en **tu** parquet (tus puntos, tu periodo, tus variables) y una **limitación** de tus datos, como hicimos aquí con las nubes y la resolución de la banda térmica de Landsat.
 # 3. Las **palabras clave** reflejen tu tema (si subes la serie de Sentinel-2: `Sentinel-2`, `NDWI`, `clorofila`, `chlorophyll`).
 # 4. El **lugar** y las **fuentes relacionadas** (`related_identifiers`) correspondan a tus datos: Sentinel-2 en Planetary Computer, por ejemplo.
 #

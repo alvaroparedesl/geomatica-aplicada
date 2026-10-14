@@ -289,7 +289,7 @@ shutil.rmtree(demo)    # borramos el repositorio de la demostración
 #
 # Ahora trabajamos con Git de verdad. Para poder ejecutar el cuaderno de principio a fin en cualquier lugar, el repositorio de práctica vive en una carpeta temporal. En Colab será tu carpeta de trabajo; el paso final lo subirá a GitHub.
 #
-# Empezamos con el **código de los cuadernos anteriores**, tal como suele quedar: un script plano que va de arriba abajo (cargar la serie de temperatura, detectar eventos, calcular anomalías de Sentinel-2).
+# Empezamos con el **código de los cuadernos anteriores**, tal como suele quedar: un script plano que va de arriba abajo (cargar la serie de temperatura de Landsat, detectar episodios, calcular anomalías de Sentinel-2).
 
 # %%
 PROYECTO = TALLER / "analisis-taller"
@@ -304,14 +304,14 @@ git("status", "--short", "--branch", cwd=PROYECTO)
 SCRIPT_V1 = '''"""Análisis del taller, versión 1: un script plano de arriba hacia abajo."""
 import pandas as pd
 
-from utils.extremos import cargar_oisst, climatologia_hobday, detectar_eventos
+from utils.extremos import cargar_landsat, climatologia_ventana, controlar_calidad_agua, detectar_episodios, serie_landsat
 from utils.series import anomalias_zscore, cargar_series, serie_de_punto
 
-sst = cargar_oisst("punto")
-clima = climatologia_hobday(sst)
-calor = detectar_eventos(sst, clima, "calor")
-frio = detectar_eventos(sst, clima, "frio")
-print("Olas de calor:", len(calor), "| Olas de frío:", len(frio))
+st = serie_landsat(controlar_calidad_agua(cargar_landsat()), "bahia_concepcion")
+clima = climatologia_ventana(st)
+calor = detectar_episodios(st, clima, "calor")
+frio = detectar_episodios(st, clima, "frio")
+print("Episodios de calor:", len(calor), "| Episodios de frío:", len(frio))
 
 tabla = cargar_series()
 serie = serie_de_punto(tabla, "bahia_concepcion", "ndwi")
@@ -329,7 +329,7 @@ git("status", "--short", cwd=PROYECTO)
 
 # %%
 git("add", "analisis.py", cwd=PROYECTO)
-git("commit", "-q", "-m", "feat: script plano con eventos de OISST y anomalías de Sentinel-2", cwd=PROYECTO)
+git("commit", "-q", "-m", "feat: script plano con episodios de Landsat y anomalías de Sentinel-2", cwd=PROYECTO)
 git("log", "--oneline", cwd=PROYECTO)
 
 # %% [markdown]
@@ -342,19 +342,19 @@ git("log", "--oneline", cwd=PROYECTO)
 # %%
 git("mv", "analisis.py", "analisis_taller.py", cwd=PROYECTO)
 
-SCRIPT_V2 = '''"""Análisis del taller: eventos extremos en OISST y anomalías de Sentinel-2."""
+SCRIPT_V2 = '''"""Análisis del taller: episodios de temperatura en Landsat y anomalías de Sentinel-2."""
 import pandas as pd
 
-from utils.extremos import cargar_oisst, climatologia_hobday, detectar_eventos
+from utils.extremos import cargar_landsat, climatologia_ventana, controlar_calidad_agua, detectar_episodios, serie_landsat
 from utils.series import anomalias_zscore, cargar_series, serie_de_punto
 
 
-def eventos_oisst():
-    """Olas de calor y de frío marinas (Hobday) frente a Concepción, en una sola tabla."""
-    sst = cargar_oisst("punto")
-    clima = climatologia_hobday(sst)
-    calor = detectar_eventos(sst, clima, "calor")
-    frio = detectar_eventos(sst, clima, "frio")
+def episodios_landsat(punto="bahia_concepcion"):
+    """Episodios cálidos y fríos de la temperatura de superficie (Landsat 8 y 9) en un punto, en una sola tabla."""
+    st = serie_landsat(controlar_calidad_agua(cargar_landsat()), punto)
+    clima = climatologia_ventana(st)
+    calor = detectar_episodios(st, clima, "calor")
+    frio = detectar_episodios(st, clima, "frio")
     return pd.concat([calor, frio], ignore_index=True)
 
 
@@ -365,9 +365,9 @@ def anomalias_punto(punto="bahia_concepcion", variable="ndwi"):
 
 
 def main():
-    eventos = eventos_oisst()
-    print("Olas de calor:", int((eventos["tipo"] == "calor").sum()),
-          "| Olas de frío:", int((eventos["tipo"] == "frio").sum()))
+    episodios = episodios_landsat()
+    print("Episodios de calor:", int((episodios["tipo"] == "calor").sum()),
+          "| Episodios de frío:", int((episodios["tipo"] == "frio").sum()))
     z = anomalias_punto()
     print("Fechas con |z| > 2:", int((z.abs() > 2).sum()), "de", len(z))
 
@@ -390,7 +390,7 @@ git("diff", "--staged", "-M", cwd=PROYECTO)
 # Las líneas con `-` se quitaron y las con `+` se agregaron. Nota que la **lógica no cambió**, solo cómo está organizada. Ahora el segundo commit.
 
 # %%
-git("commit", "-q", "-m", "refactor: separar el análisis en funciones reutilizables (eventos_oisst, anomalias_punto)", cwd=PROYECTO)
+git("commit", "-q", "-m", "refactor: separar el análisis en funciones reutilizables (episodios_landsat, anomalias_punto)", cwd=PROYECTO)
 git("log", "--oneline", cwd=PROYECTO)
 
 # %% [markdown]
@@ -400,13 +400,13 @@ git("log", "--oneline", cwd=PROYECTO)
 
 # %%
 SCRIPT_V3 = SCRIPT_V2.replace('''def main():
-    eventos = eventos_oisst()''', '''CARPETA_RESULTADOS = Path(__file__).parent / "resultados"
+    episodios = episodios_landsat()''', '''CARPETA_RESULTADOS = Path(__file__).parent / "resultados"
 
 
 def main():
     CARPETA_RESULTADOS.mkdir(exist_ok=True)
-    eventos = eventos_oisst()
-    eventos.to_csv(CARPETA_RESULTADOS / "eventos_oisst.csv", index=False)''').replace('''    z = anomalias_punto()
+    episodios = episodios_landsat()
+    episodios.to_csv(CARPETA_RESULTADOS / "episodios_landsat.csv", index=False)''').replace('''    z = anomalias_punto()
 ''', '''    z = anomalias_punto()
     z.to_csv(CARPETA_RESULTADOS / "anomalias_ndwi_bahia.csv")
 ''').replace('import pandas as pd\n', 'from pathlib import Path\n\nimport pandas as pd\n', 1)
@@ -417,7 +417,7 @@ git("diff", cwd=PROYECTO)
 
 # %%
 git("add", "analisis_taller.py", ".gitignore", cwd=PROYECTO)
-git("commit", "-q", "-m", "feat: guardar eventos y anomalías en resultados/ (fuera de Git)", cwd=PROYECTO)
+git("commit", "-q", "-m", "feat: guardar episodios y anomalías en resultados/ (fuera de Git)", cwd=PROYECTO)
 
 # %% [markdown]
 # ### Cuarto commit: una persona que no eres tú tiene que poder ejecutarlo
@@ -429,8 +429,9 @@ README = f'''# Análisis del taller FAIR: eventos extremos y anomalías
 
 Código del taller "Datos FAIR, series temporales satelitales y detección de anomalías con Python".
 
-* `analisis_taller.py`: detecta olas de calor y de frío marinas frente a Concepción (NOAA OISST, método de Hobday)
-  y calcula la anomalía del NDWI de Sentinel-2 en la bahía de Concepción.
+* `analisis_taller.py`: detecta episodios cálidos y fríos de la temperatura de superficie en la bahía de Concepción
+  (Landsat 8 y 9, anomalías respecto de una climatología por ventana de días) y calcula la anomalía del NDWI de
+  Sentinel-2 en la misma bahía.
 
 ## Cómo ejecutarlo
 
@@ -443,7 +444,7 @@ Escribe sus resultados en `resultados/` (no se versiona).
 
 ## Autoría
 
-{NOMBRE}. Datos: NOAA OISST v2.1 (dominio público) y ESA Copernicus Sentinel-2 (acceso libre).
+{NOMBRE}. Datos: USGS Landsat 8 y 9 Collection 2 Level-2 (dominio público) y ESA Copernicus Sentinel-2 (acceso libre).
 '''
 (PROYECTO / "README.md").write_text(README)
 git("add", "README.md", cwd=PROYECTO)
@@ -459,7 +460,7 @@ git("log", "--oneline", "--stat", cwd=PROYECTO)
 # Una **rama** sirve para probar algo sin tocar lo que ya funciona. Prueba el flujo completo:
 #
 # 1. Crea una rama (`git switch -c prueba-percentil`).
-# 2. Cambia algo (por ejemplo, agrega un parámetro `percentil` a `eventos_oisst`) y haz un commit con un mensaje descriptivo.
+# 2. Cambia algo (por ejemplo, agrega un parámetro `percentil` a `episodios_landsat`) y haz un commit con un mensaje descriptivo.
 # 3. Mira la historia (`git log --oneline --graph --all`).
 # 4. Vuelve a `main` (`git switch main`) y verifica que el cambio **no está**.
 # 5. Si quedaste conforme, incorpóralo (`git merge prueba-percentil`); si no, borra la rama (`git branch -D prueba-percentil`).
@@ -470,9 +471,9 @@ git("log", "--oneline", "--stat", cwd=PROYECTO)
 git("switch", "-c", "prueba-percentil", cwd=PROYECTO)
 codigo = (PROYECTO / "analisis_taller.py").read_text()
 (PROYECTO / "analisis_taller.py").write_text(
-    codigo.replace('"""Olas de calor y de frío marinas (Hobday) frente a Concepción, en una sola tabla."""',
-                   '"""Olas de calor y de frío marinas (Hobday, percentiles 90 y 10) frente a Concepción, en una sola tabla."""'))
-git("commit", "-q", "-am", "docs: aclarar los percentiles en la descripción de eventos_oisst", cwd=PROYECTO)
+    codigo.replace('"""Episodios cálidos y fríos de la temperatura de superficie (Landsat 8 y 9) en un punto, en una sola tabla."""',
+                   '"""Episodios cálidos (p90) y fríos (p10) de la temperatura de superficie (Landsat 8 y 9) en un punto, en una sola tabla."""'))
+git("commit", "-q", "-am", "docs: aclarar los percentiles en la descripción de episodios_landsat", cwd=PROYECTO)
 git("log", "--oneline", "--graph", "--all", cwd=PROYECTO)
 git("switch", "main", cwd=PROYECTO)
 git("merge", "-q", "prueba-percentil", cwd=PROYECTO)
@@ -500,7 +501,7 @@ git("clone", "-q", str(REMOTO), str(colaboradora), cwd=TALLER)
 git("config", "user.name", "Colaboradora", cwd=colaboradora, mostrar=False)
 git("config", "user.email", "colaboradora@example.com", cwd=colaboradora, mostrar=False)
 with open(colaboradora / "README.md", "a") as f:
-    f.write("\n## Cita\n\nSi usas este código, cita el taller y los datos de NOAA y Copernicus.\n")
+    f.write("\n## Cita\n\nSi usas este código, cita el taller y los datos del USGS (Landsat) y de Copernicus (Sentinel-2).\n")
 git("commit", "-q", "-am", "docs: agregar sección de cita al README", cwd=colaboradora)
 git("push", "-q", "origin", "main", cwd=colaboradora)
 
