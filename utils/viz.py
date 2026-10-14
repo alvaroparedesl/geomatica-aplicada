@@ -531,7 +531,7 @@ def _texto_popup(fila, popup):
     return _popup_de_columnas(fila, popup)
 
 
-def mapa_puntos(puntos, zoom=None, radio_m=None, ancho=800, alto=500, popup=None, ancho_popup=300):
+def mapa_puntos(puntos, zoom=None, radio_m=None, ancho=800, alto=500, popup=None, ancho_popup=300, capas=None):
     """
     Mapa de folium con los puntos de muestreo, un color por `tipo` de punto.
 
@@ -559,6 +559,9 @@ def mapa_puntos(puntos, zoom=None, radio_m=None, ancho=800, alto=500, popup=None
             El HTML que armas tú (función o diccionario) se usa tal cual: escapa tú los textos
             que vengan de datos con `html.escape`.
         ancho_popup (int): Ancho máximo del cuadro emergente, en píxeles.
+        capas (list, optional): Capas de folium extra con `name=` (por ejemplo `folium.GeoJson(..., name="huella")`).
+            Pásalas aquí y no con `.add_to(mapa)` después: el control de capas ya está armado y una capa con
+            nombre agregada más tarde hace fallar el JavaScript del mapa (no se dibuja ni esa capa ni lo que sigue).
 
     Returns:
         folium.Map: Escribe el nombre de la variable al final de la celda para verlo.
@@ -596,6 +599,8 @@ def mapa_puntos(puntos, zoom=None, radio_m=None, ancho=800, alto=500, popup=None
             ).add_to(capa)
             if radio_m:
                 folium.Circle([fila["lat"], fila["lon"]], radius=radio_m, color=color, weight=1, fill=False).add_to(capa)
+    for capa in capas or []:  # antes del control, para que aparezcan en él
+        capa.add_to(mapa)
     folium.LayerControl(collapsed=False).add_to(mapa)
     if zoom is None and len(puntos) > 1:
         mapa.fit_bounds([[puntos["lat"].min(), puntos["lon"].min()], [puntos["lat"].max(), puntos["lon"].max()]])

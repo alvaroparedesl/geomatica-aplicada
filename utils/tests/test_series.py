@@ -373,6 +373,22 @@ def test_mapa_puntos():
     assert una.options["zoom"] == 12
 
 
+def test_mapa_puntos_capas_extra_se_definen_antes_del_control_de_capas():
+    # Una capa con nombre agregada con .add_to(mapa) DESPUÉS de mapa_puntos queda definida en el JavaScript
+    # después de L.control.layers(...): el control recibe `undefined`, Leaflet lanza un error y el mapa no
+    # dibuja la capa (ni nada de lo que sigue). Con capas=[...] se define antes.
+    pytest.importorskip("folium")
+    import folium
+
+    from utils.viz import mapa_puntos
+
+    poligono = {"type": "Polygon", "coordinates": [[[-73.8, -37.1], [-72.7, -37.1], [-72.7, -36.2], [-73.8, -37.1]]]}
+    huella = folium.GeoJson(poligono, name="huella 18HXE")
+    html = mapa_puntos(_puntos_viz(), capas=[huella]).get_root().render()
+    definicion = html.index(f"var {huella.get_name()} = L.geoJson(")
+    assert definicion < html.index("L.control.layers(") and "huella 18HXE" in html
+
+
 def test_serie_interactiva():
     pytest.importorskip("hvplot")
     import holoviews as hv
