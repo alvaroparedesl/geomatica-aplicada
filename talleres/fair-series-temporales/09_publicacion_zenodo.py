@@ -39,6 +39,7 @@ if "google.colab" in sys.modules:  # Colab: clonar el repositorio (y actualizarl
 else:  # Local: subir desde la carpeta actual hasta encontrar utils/
     RAIZ = next(p for p in [Path.cwd(), *Path.cwd().parents] if (p / "utils").is_dir())
 sys.path.insert(0, str(RAIZ))
+DATOS = RAIZ / "talleres" / "fair-series-temporales" / "datos"  # carpeta con los archivos de datos del taller
 
 # %% [markdown]
 # ## 1. Guía para tu presentación de 6 minutos
@@ -158,9 +159,10 @@ else:
 import tempfile
 
 import pandas as pd
+import pyarrow.parquet as pq
 
-from utils.extremos import cargar_landsat, controlar_calidad_agua, episodios_por_punto
-from utils.series import guardar_series, leer_metadatos_series
+from utils.extremos import controlar_calidad_agua, episodios_por_punto
+from utils.series import guardar_series
 
 CARPETA = Path(tempfile.mkdtemp(prefix="zenodo_"))      # carpeta de trabajo temporal: aquí van las copias
 SALIDAS_BLOQUE7 = Path("/content/salidas") if "google.colab" in sys.modules else Path(tempfile.gettempdir()) / "salidas_taller"
@@ -169,7 +171,7 @@ RUTA_CUADERNO = RAIZ / "talleres" / "fair-series-temporales" / "07_eventos_extre
 RUTA_PARQUET = SALIDAS_BLOQUE7 / "episodios_landsat_concepcion.parquet"                        # cambia por tu parquet
 
 if not RUTA_PARQUET.exists():     # no ejecutaste el bloque 7 en esta sesión: lo generamos con las mismas funciones
-    episodios = episodios_por_punto(controlar_calidad_agua(cargar_landsat()), tipos=["bahia", "pluma", "golfo", "laguna"])
+    episodios = episodios_por_punto(controlar_calidad_agua(pd.read_parquet(DATOS / "series_landsat_concepcion.parquet")), tipos=["bahia", "pluma", "golfo", "laguna"])
     RUTA_PARQUET = CARPETA / "episodios_landsat_concepcion.parquet"
     guardar_series(episodios, RUTA_PARQUET, metadatos={
         "titulo": "Episodios cálidos y fríos de la temperatura de superficie en el agua de la bahía de Concepción y alrededores (Landsat 8 y 9, 2013-2026)",
@@ -202,7 +204,8 @@ for ruta in (RUTA_CUADERNO, RUTA_PARQUET):
 # Mira los metadatos que el parquet lleva **dentro del archivo** (los escribió `guardar_series`). Esa es la primera capa de documentación; los metadatos de Zenodo son la segunda, la que ve el buscador.
 
 # %%
-meta_parquet = leer_metadatos_series(RUTA_PARQUET)
+# Los metadatos viajan dentro del archivo, como bytes (la clave "pandas" es de pandas y no nos interesa)
+meta_parquet = {k.decode(): v.decode() for k, v in pq.read_schema(RUTA_PARQUET).metadata.items() if k != b"pandas"}
 for clave in ("titulo", "fuente", "licencia", "periodo", "limitaciones"):
     print(f"{clave:9s}: {meta_parquet.get(clave, '(no consta)')}")
 
