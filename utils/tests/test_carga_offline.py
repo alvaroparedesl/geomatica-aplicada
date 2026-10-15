@@ -24,6 +24,7 @@ Garantías que se prueban:
 
 import numpy as np
 import odc.stac
+import pandas as pd
 import pytest
 import rasterio
 from pyproj import Transformer
@@ -101,6 +102,40 @@ def test_parametros_carga_planetary():
         "bands": ["B04", "B08", "SCL"], "crs": "EPSG:32719", "resolution": 30, "bbox": [0, 0, 1, 1],
         "chunks": {"x": 512, "y": 512}, "groupby": stac.agrupar_por_dia_y_offset, "patch_url": stac.firmar_url,
     }
+
+
+def test_parametros_carga_acepta_argumentos_extra_de_odc_stac():
+    p = stac.parametros_carga("sentinel-2", ["B04"], 10, "EPSG:32719", fail_on_error=False, dtype="float32")
+    assert p["fail_on_error"] is False and p["dtype"] == "float32"
+    assert p["groupby"] is stac.agrupar_por_dia_y_offset  # lo demás sigue igual
+    landsat = stac.parametros_carga("landsat", ["red"], 30, "EPSG:32719", fail_on_error=False, groupby="solar_day")
+    assert landsat["fail_on_error"] is False and landsat["groupby"] == "solar_day"
+
+
+def test_parametros_carga_sentinel2_no_deja_cambiar_el_groupby():
+    with pytest.raises(ValueError, match="no se puede cambiar `groupby`"):
+        stac.parametros_carga("sentinel-2", ["B04"], 10, "EPSG:32719", groupby="solar_day")
+
+
+def test_cargar_ventanas_pasa_los_argumentos_extra_a_odc_stac(tmp_path, monkeypatch):
+    from utils import series
+
+    llamadas = []
+    cargar_real = odc.stac.load
+
+    def espia(items, **kwargs):
+        llamadas.append(kwargs)
+        return cargar_real(items, **kwargs)
+
+    monkeypatch.setattr(odc.stac, "load", espia)
+    items = _localizar(leer_items("pc_2022-01-31"), tmp_path)
+    items = stac.preparar_items(items, verbose=False)
+    oeste, sur, este, norte = _bbox()
+    puntos = pd.DataFrame({"id": ["p1"], "nombre": ["uno"], "lat": [(sur + norte) / 2], "lon": [(oeste + este) / 2], "tipo": ["agua"]})
+    ventanas = series.cargar_ventanas(items, puntos, bandas=["B04", "B08", "SCL"], radio_m=40, crs=EPSG, catalogo="planetary",
+                                      verbose=False, fail_on_error=False)
+    assert llamadas and all(l["fail_on_error"] is False for l in llamadas)
+    assert "offset_reflectancia" in ventanas["p1"].coords
 
 
 def test_parametros_carga_sin_opcionales():
