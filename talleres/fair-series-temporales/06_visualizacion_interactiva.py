@@ -19,7 +19,7 @@
 # %% [markdown]
 # ## Preparar el entorno
 #
-# La celda `Preparar entorno` clona el repositorio del curso (para usar `utils/`). **`hvplot` y `jupyter_bokeh` no vienen en Colab**, así que la celda siguiente los instala, solo si falta alguno (`hvplot` usa `bokeh`, `holoviews` y `panel`, que Colab ya trae; `jupyter_bokeh` permite mostrar los menús de `groupby`). Puede tardar un minuto.
+# La celda `Preparar entorno` clona el repositorio del curso (para usar `utils/`). **`hvplot` no viene en Colab**, así que la celda siguiente lo instala, solo si falta (usa `bokeh`, `holoviews` y `panel`, que Colab ya trae). Puede tardar un minuto.
 
 # %%
 # @title Preparar entorno (ejecutar primero)
@@ -40,17 +40,16 @@ sys.path.insert(0, str(RAIZ))
 DATOS = RAIZ / "talleres" / "fair-series-temporales" / "datos"  # carpeta con los archivos de datos del taller
 
 # %%
-# @title Instalar hvplot y jupyter_bokeh (solo si falta alguno)
+# @title Instalar hvplot (solo si falta)
 import importlib.util
 
-NECESARIOS = ["hvplot", "jupyter_bokeh"]  # hvplot hace los gráficos; jupyter_bokeh muestra los menús de groupby
-if any(importlib.util.find_spec(modulo) is None for modulo in NECESARIOS):
+if importlib.util.find_spec("hvplot") is None:
     requisitos = [linea.strip() for linea in (RAIZ / "talleres/fair-series-temporales/requirements.txt").read_text().splitlines()
                   if linea.strip() and not linea.startswith("#")]
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", *[r for r in requisitos if r.split()[0] in NECESARIOS]], check=True)
-    print("hvplot y jupyter_bokeh instalados")
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", *[r for r in requisitos if r.split()[0] == "hvplot"]], check=True)
+    print("hvplot instalado")
 else:
-    print("hvplot y jupyter_bokeh ya están instalados")
+    print("hvplot ya está instalado")
 
 # %%
 # @title Importar bibliotecas
@@ -63,6 +62,7 @@ import hvplot
 import hvplot.pandas  # noqa: F401  (activa el accesor .hvplot de pandas)
 import matplotlib.pyplot as plt
 import pandas as pd
+import plotly.graph_objects as go
 from IPython.display import HTML, display
 
 # Funciones de apoyo del curso (carpeta utils/)
@@ -197,10 +197,27 @@ suavizada = df_pluma.dropna(subset=["media móvil 30 d"]).hvplot.line(x="fecha",
 tabla.hvplot.line(x="fecha", y="ndci", by="id", subplots=True, width=430, height=230, ylabel="NDCI", xlabel="", shared_axes=True).cols(2)
 
 # %% [markdown]
-# Con `groupby="id"` en vez de `by="id"` obtienes **un solo gráfico con un menú desplegable** para elegir el punto. Ese menú es un widget de `panel` y necesita `jupyter_bokeh`, que instalaste arriba. Si aun así no aparece o no responde, usa `by` o `subplots`.
+# Para **un solo gráfico con un menú desplegable** que elija el punto, `hvplot` ofrece `groupby="id"`, pero ese menú es un widget de `panel` que en Colab necesita permisos y paquetes extra. Aquí usamos `Plotly`, que trae el menú dentro del propio gráfico: elige el punto y pasa el cursor para ver la calidad del dato.
 
 # %%
-tabla.hvplot.line(x="fecha", y="ndvi", groupby="id", width=800, height=330, ylabel="NDVI", title="NDVI (elige el punto)")
+def serie_con_menu(tabla, variable, titulo, etiqueta):
+    """Una línea por punto en un solo gráfico de Plotly; el menú elige cuál se ve (el menú va dentro del gráfico, no es un widget)."""
+    ids = list(tabla["id"].unique())
+    fig = go.Figure()
+    for i, identificador in enumerate(ids):
+        s = tabla[tabla["id"] == identificador].dropna(subset=[variable])
+        fig.add_trace(go.Scatter(x=s["fecha"], y=s[variable], mode="lines+markers", name=identificador, visible=(i == 0),
+                                 line={"color": colores[identificador]}, customdata=s[["nubes_escena", "pixeles_validos"]],
+                                 hovertemplate=("%{x|%Y-%m-%d}<br>" + etiqueta + ": %{y:.3f}<br>nubes de la escena: %{customdata[0]:.0f} %"
+                                                "<br>píxeles válidos: %{customdata[1]:.2f}<extra></extra>")))
+    botones = [{"label": identificador, "method": "update", "args": [{"visible": [j == i for j in range(len(ids))]}, {"title": f"{titulo}: {identificador}"}]}
+               for i, identificador in enumerate(ids)]
+    fig.update_layout(title=f"{titulo}: {ids[0]}", updatemenus=[{"buttons": botones, "x": 0, "y": 1.18, "xanchor": "left"}],
+                      xaxis_title="Fecha", yaxis_title=etiqueta, width=800, height=380, margin={"t": 90})
+    return fig
+
+
+serie_con_menu(tabla, "ndvi", "NDVI", "NDVI")
 
 # %% [markdown]
 # Un gráfico se puede guardar como un archivo HTML **independiente**, que cualquiera abre en el navegador sin Python. Sirve para compartir un resultado (y de agregarlo a tu repositorio y a tu depósito en el bloque 9).
