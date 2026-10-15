@@ -14,11 +14,15 @@ y lo compara con `utils.stac.offset_sentinel2`, `utils.stac.agregar_offset` y
   offsets y reflectancias que las de `utils`, con carga real de `odc.stac` sobre archivos locales
   (varias fechas, dos satélites el mismo día y versiones duplicadas de una toma), solo con Planetary Computer.
 * El DN 0 (sin datos) y los valores fuera de 0 a 1 pasan a NaN igual que en `utils`.
+* El cuaderno `analisis_completo` (un solo cuaderno, sin `utils`) repite esas reglas con sus propias funciones
+  (`offset_item`, `grupo_dia_offset`, `quitar_duplicados`, `agregar_metadatos`, `reflectancia_sentinel2`): se
+  comprueba que dan lo mismo que `utils`, incluidas las nubes de escena de cada fecha.
 """
 
 import ast
 import re
 import types
+from datetime import timedelta
 from pathlib import Path
 
 import numpy as np
@@ -28,6 +32,7 @@ import xarray as xr
 
 from utils import raster, stac
 from utils.raster import COORD_OFFSET
+from utils.series import agregar_nubes_escena
 
 from .conftest import FIXTURES, leer_items
 from .test_carga_offline import EPSG, REFL, _bbox, _localizar
@@ -36,12 +41,12 @@ from .test_reflectancia import cubo_dn
 TALLER = Path(__file__).resolve().parents[2] / "talleres" / "fair-series-temporales"
 
 
-def _funciones_del_cuaderno(archivo, nombres):
+def _funciones_del_cuaderno(archivo, nombres, **importado):
     """Compila solo las funciones `nombres` escritas en un cuaderno (`.py` de jupytext) y las devuelve."""
     fuente = (TALLER / archivo).read_text(encoding="utf-8")
     definiciones = [n for n in ast.parse(fuente).body if isinstance(n, ast.FunctionDef) and n.name in nombres]
     assert {d.name for d in definiciones} == set(nombres), f"{archivo} no define {nombres}"
-    espacio = {"np": np}  # lo único que los cuadernos importan para estas funciones
+    espacio = {"np": np, **importado}  # lo único que los cuadernos importan para estas funciones
     exec(compile(ast.Module(body=definiciones, type_ignores=[]), archivo, "exec"), espacio)
     return types.SimpleNamespace(**{n: espacio[n] for n in nombres})
 
@@ -125,3 +130,44 @@ def test_reflectancia_del_cuaderno04_funciona_con_una_sola_fecha(cuaderno04):
     una = cubo_dn().drop_vars("SCL").isel(time=2)  # el offset queda como coordenada escalar
     xr.testing.assert_identical(cuaderno04.reflectancia_sentinel2(una),
                                 raster.convertir_a_reflectancia(una, "sentinel-2"))
+
+
+# ---------------------------------------------------------------- cuaderno analisis_completo: el mismo flujo, sin utils
+FUNCIONES_COMPLETO = ("offset_item", "grupo_dia_offset", "quitar_duplicados", "agregar_metadatos", "reflectancia_sentinel2")
+
+
+@pytest.fixture(scope="module")
+def completo():
+    return _funciones_del_cuaderno("analisis_completo.py", FUNCIONES_COMPLETO, re=re, timedelta=timedelta)
+
+
+def _items_planetary():
+    return [(a, item) for a, item in _items_de_catalogos_activos() if a.startswith("pc_")]  # el cuaderno es solo Planetary Computer
+
+
+@pytest.mark.parametrize("archivo,item", _items_planetary(), ids=lambda v: v if isinstance(v, str) else v.id[:30])
+def test_offset_item_de_analisis_completo_coincide_con_offset_sentinel2(archivo, item, completo):
+    assert completo.offset_item(item) == stac.offset_sentinel2(item), f"{archivo}: {item.id}"
+    assert completo.grupo_dia_offset(item) == stac.agrupar_por_dia_y_offset(item)
+
+
+@pytest.mark.parametrize("nombre", ESCENARIOS)
+def test_analisis_completo_deja_las_mismas_imagenes_fechas_y_nubes_que_utils(nombre, completo, tmp_path):
+    items = [i for a in ESCENARIOS[nombre] for i in leer_items(a)]
+    _localizar(items, tmp_path)
+    assert [i.id for i in completo.quitar_duplicados(items)] == [i.id for i in stac.preparar_items(items, verbose=False)]
+    items = stac.preparar_items(items, verbose=False)
+
+    parametros = stac.parametros_carga("sentinel-2", ["B02", "B04", "B08", "SCL"], resolucion=10, crs=EPSG, bbox=_bbox())
+    datos = odc.stac.load(items, **parametros)
+    cargado_con_el_cuaderno = odc.stac.load(items, **{**parametros, "groupby": completo.grupo_dia_offset})
+    np.testing.assert_array_equal(cargado_con_el_cuaderno["time"].values, datos["time"].values)  # misma agrupación en fechas
+
+    del_cuaderno = completo.agregar_metadatos(cargado_con_el_cuaderno, items)
+    de_utils = agregar_nubes_escena(stac.agregar_offset(datos, items), items)
+    np.testing.assert_array_equal(del_cuaderno[COORD_OFFSET].values, de_utils[COORD_OFFSET].values)
+    np.testing.assert_allclose(del_cuaderno["nubes_escena"].values, de_utils["nubes_escena"].values)
+
+    espectrales = ["B02", "B04", "B08"]
+    xr.testing.assert_allclose(completo.reflectancia_sentinel2(del_cuaderno[espectrales]),
+                               raster.convertir_a_reflectancia(de_utils[espectrales], "sentinel-2"))
