@@ -265,7 +265,7 @@ mapa_puntos
 # %% [markdown]
 # ### Herramientas de Sentinel-2
 #
-# La reflectancia de Sentinel-2 L2A es `DN * 0,0001 + offset`. El **offset depende de la versión de procesamiento (baseline) de cada imagen**: `-0,1` desde el baseline 04.00 y `0` antes. Se decide imagen por imagen, nunca una constante para toda la serie. `grupo_dia_offset` se pasa a `odc.stac.load` para que nunca se mezclen en una fecha imágenes con offsets distintos. Estas funciones sirven solo para Sentinel-2 de Planetary Computer.
+# La reflectancia de Sentinel-2 L2A es `DN * 0,0001 + offset`. El **offset depende de la versión de procesamiento (baseline) de cada imagen**: `-0,1` desde el baseline 04.00 y `0` antes. Se decide imagen por imagen, nunca una constante para toda la serie. `grupo_dia_offset` se pasa a `odc.stac.load` para que nunca se mezclen en una fecha imágenes con offsets distintos. A veces dos tiles de una misma toma tienen la misma hora exacta y offsets distintos (uno reprocesado con baseline 04.00 y otro no): quedarían en dos fechas idénticas y no se podría saber cuál es cuál. `desempatar_fechas` desplaza 1 ms el segundo grupo para que cada fecha sea única. Estas funciones sirven solo para Sentinel-2 de Planetary Computer.
 
 # %%
 def offset_item(item):
@@ -292,6 +292,26 @@ def quitar_duplicados(items):
     return sorted((item for _, item in mejor.values()), key=lambda item: (item.datetime, item.id))
 
 
+def desempatar_fechas(items):
+    """Si dos grupos (día, offset) tienen la misma hora exacta, desplaza 1 ms el segundo para que cada fecha sea única."""
+    items = list(items)
+    grupos = {}
+    for i, item in enumerate(items):
+        grupos.setdefault(grupo_dia_offset(item), []).append(i)
+    ocupadas = set()
+    for clave in sorted(grupos):
+        primera = min(items[i].datetime for i in grupos[clave])
+        corrimiento = timedelta(0)
+        while primera + corrimiento in ocupadas:
+            corrimiento += timedelta(milliseconds=1)
+        ocupadas.add(primera + corrimiento)
+        if corrimiento:
+            for i in grupos[clave]:
+                items[i] = items[i].clone()  # copia: el ítem original no cambia
+                items[i].datetime += corrimiento
+    return sorted(items, key=lambda item: (item.datetime, item.id))
+
+
 def agregar_metadatos(datos, items):
     """Agrega a `datos` el offset de reflectancia y las nubes de la escena de cada fecha (coordenadas de `time`)."""
     grupos = {}
@@ -301,7 +321,10 @@ def agregar_metadatos(datos, items):
     for (_, offset), lista in grupos.items():
         nubes = float(np.mean([i.properties["eo:cloud_cover"] for i in lista]))
         for item in lista:
-            por_fecha[np.datetime64(item.datetime.replace(tzinfo=None), "ns")] = (offset, nubes)
+            marca = np.datetime64(item.datetime.replace(tzinfo=None), "ns")
+            if marca in por_fecha and por_fecha[marca][0] != offset:
+                raise ValueError(f"Dos grupos con offsets distintos tienen la misma hora exacta ({marca}): pasa los ítems por desempatar_fechas()")
+            por_fecha[marca] = (offset, nubes)
     fechas = [por_fecha[t] for t in datos["time"].values.astype("datetime64[ns]")]
     return datos.assign_coords(offset_reflectancia=("time", [f[0] for f in fechas]), nubes_escena=("time", [f[1] for f in fechas]))
 
@@ -321,7 +344,7 @@ def reflectancia_sentinel2(datos):
 # Buscamos la fecha más despejada del período en el área (o la que fijaste).
 
 # %%
-items_area = quitar_duplicados(buscar("sentinel-2-l2a", AREA, FECHAS_S2))
+items_area = desempatar_fechas(quitar_duplicados(buscar("sentinel-2-l2a", AREA, FECHAS_S2)))
 dias = pd.DataFrame({"dia": [grupo_dia_offset(i)[0] for i in items_area], "nubes": [i.properties["eo:cloud_cover"] for i in items_area]})
 nubes_por_dia = dias.groupby("dia")["nubes"].mean()
 fecha_escena = FECHA_ESCENA or nubes_por_dia.idxmin()
@@ -469,7 +492,7 @@ plt.show()
 
 # %%
 bbox_zona = bbox_puntos(puntos, RADIO_S2)
-items = quitar_duplicados(buscar("sentinel-2-l2a", bbox_zona, FECHAS_S2, NUBES_MAX_ESCENA))
+items = desempatar_fechas(quitar_duplicados(buscar("sentinel-2-l2a", bbox_zona, FECHAS_S2, NUBES_MAX_ESCENA)))
 tabla_items = pd.DataFrame({"fecha": [i.datetime.strftime("%Y-%m-%d") for i in items], "tile": [i.properties["s2:mgrs_tile"] for i in items],
                             "nubes_%": [i.properties["eo:cloud_cover"] for i in items],
                             "baseline": [i.properties["s2:processing_baseline"] for i in items], "offset": [offset_item(i) for i in items]})
