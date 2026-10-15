@@ -100,7 +100,7 @@ guardarla y `herramientas`/`usar` siguen funcionando.
 | `CATALOGO_SENTINEL2` | Catálogo de Sentinel-2 por defecto (`"planetary"`); ver "Catálogos" más abajo |
 | `conectar_catalogo(catalogo)` | Devuelve el cliente nativo `pystac_client.Client` (en Planetary Computer, con firma automática) |
 | `parametros_busqueda(sensor, bbox, fechas, nubes_max, catalogo)` | Diccionario para `catalogo.search(**parametros)`: colección, bbox, fechas y filtro `query`. No busca nada |
-| `preparar_items(items)` | Quita versiones duplicadas de una toma Sentinel-2, rechaza catálogos mezclados o desactivados y ordena por fecha |
+| `preparar_items(items)` | Quita versiones duplicadas de una toma Sentinel-2, rechaza catálogos mezclados o desactivados, separa por 1 ms las fechas de grupos con offsets distintos y ordena por fecha |
 | `resumir_imagenes(items)` | Tabla con fecha, % de nubes e id (+ baseline y offset en Sentinel-2) |
 | `parametros_carga(sensor, bandas, resolucion, crs, catalogo, bbox, chunks, **kwargs)` | Diccionario para `odc.stac.load(items, **parametros)`: nombres de banda del catálogo, `crs`, `resolution`, `chunks`, `patch_url` (firma de Planetary Computer) y `groupby`. Los `**kwargs` (por ejemplo `fail_on_error=False`) se agregan tal cual; en Sentinel-2 no se acepta `groupby`. No carga nada |
 | `agrupar_por_dia_y_offset(item)` | El `groupby` de Sentinel-2: agrupa por (día solar, offset), así nunca se mezclan offsets distintos en una fecha |
@@ -253,7 +253,11 @@ de `utils/stac.py` (`help(utils.stac)`).
 Cómo se aplica, paso a paso (el flujo del ejemplo de arriba):
 
 1. `preparar_items` quita las versiones repetidas de una misma toma (deja el
-   baseline más alto) y exige un solo catálogo.
+   baseline más alto) y exige un solo catálogo. Si dos tiles de una misma toma
+   tienen offsets distintos (uno reprocesado con baseline 04.00 y otro no), tienen la
+   misma hora exacta y `odc.stac.load` los deja en dos fechas idénticas: `preparar_items`
+   desplaza 1 ms el segundo grupo (en una copia del ítem) para que cada fecha sea única
+   y se pueda asignar su offset y sus nubes.
 2. `parametros_carga` entrega un `groupby` que agrupa por (día solar, offset):
    `odc.stac.load` nunca junta en una misma fecha imágenes con offsets
    distintos (por ejemplo, una 03.00 y una 04.00 del mismo día quedan como dos
@@ -313,8 +317,8 @@ reales grabados, así que la regla del offset se prueba sin conexión:
 |---|---|
 | `test_offset_sentinel2.py` | La regla del offset sobre los 33 ítems reales (tabla de offsets esperados), límites de la ventana de Earth Search l2a, caso sin baseline, reconocimiento del catálogo y `quitar_duplicados` |
 | `test_pixeles_reales.py` | Con píxeles reales, la reflectancia coincide entre catálogos (sesgo < 0.005, un error de offset da 0.1), el agua oscura no queda negativa, y un offset equivocado se detecta |
-| `test_busqueda_offline.py` | `parametros_busqueda`, elección de catálogo (`earthsearch` es c1, `earthsearch-l2a` desactivado, Landsat solo en Planetary Computer), aviso del hueco de c1 y `preparar_items` |
-| `test_carga_offline.py` | `parametros_carga`, `groupby`, `renombrar_bandas` y `agregar_offset` con `odc.stac.load` real sobre archivos locales; dedupe, catálogos mezclados, offsets distintos en un mismo día |
+| `test_busqueda_offline.py` | `parametros_busqueda`, elección de catálogo (`earthsearch` es c1, `earthsearch-l2a` desactivado, Landsat solo en Planetary Computer), aviso del hueco de c1 y `preparar_items` (incluye la separación por 1 ms de fechas con offsets distintos) |
+| `test_carga_offline.py` | `parametros_carga`, `groupby`, `renombrar_bandas` y `agregar_offset` con `odc.stac.load` real sobre archivos locales; dedupe, catálogos mezclados, offsets distintos en un mismo día, incluido el caso de dos tiles con la misma hora exacta |
 | `test_reflectancia.py` | `convertir_a_reflectancia` con cubos sintéticos: offset por fecha, DN 0 a NaN, error al combinar fechas antes de convertir; `convertir_a_temperatura` de Landsat (DN a K y a °C) y la máscara de saturación |
 | `test_cuadernos_taller.py` | El offset y la reflectancia que los cuadernos 02 a 04 del taller escriben a la vista (extraídos de los `.py`) dan lo mismo que `offset_sentinel2`, `agregar_offset` y `convertir_a_reflectancia` |
 | `test_general.py` | Vectorial, raster y gráficos con datos sintéticos |
@@ -347,6 +351,7 @@ sobrevivió), con estos resultados:
 | Earth Search l2a: se ignora `boa_offset_applied` = True | 3 |
 | `quitar_duplicados` conserva el baseline más bajo | 17 |
 | `preparar_items` no quita duplicados | 7 |
+| `preparar_items` no separa las fechas de grupos con la misma hora | 2 |
 | Se permiten catálogos mezclados | 2 |
 | `earthsearch-l2a` se puede elegir (sin desactivar) | 5 |
 | El `groupby` ignora el offset (solo el día) | 10 |

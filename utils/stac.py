@@ -465,6 +465,11 @@ def preparar_items(items, verbose=True):
 
     * Sentinel-2: quita versiones duplicadas de una misma toma (`quitar_duplicados`)
       y exige que todos vengan de un mismo catálogo activo (si no, ValueError).
+    * Sentinel-2: si dos tiles de una misma toma tienen offsets distintos (uno
+      reprocesado con baseline 04.00 y otro no), `odc.stac.load` los separa en dos
+      fechas con la misma hora exacta, y el offset y las nubes no se podrían asignar
+      por fecha. Aquí se les suma 1 ms por grupo (sobre copias de los ítems) para que
+      cada fecha sea única (`_desempatar_fechas`).
     * Ordena por fecha.
 
     Args:
@@ -478,7 +483,7 @@ def preparar_items(items, verbose=True):
     sentinel = [item for item in items if es_sentinel2(item)]
     nombre = _catalogo_de_items(sentinel) if sentinel else "planetary"
     total = len(items)
-    items = quitar_duplicados(items)
+    items = _desempatar_fechas(quitar_duplicados(items))
     items.sort(key=lambda item: (item.datetime, item.id))
     if verbose:
         repetidas = f" ({total - len(items)} versiones repetidas descartadas)" if total > len(items) else ""
@@ -486,6 +491,48 @@ def preparar_items(items, verbose=True):
         print(f"Se encontraron {len(items)} imágenes ({colecciones}, {nombre}){repetidas}.")
         if not items:
             print("Prueba ampliando las fechas, subiendo nubes_max o cambiando el área.")
+    return items
+
+
+def _desempatar_fechas(items):
+    """
+    Evita que dos grupos de imágenes Sentinel-2 tengan la misma hora exacta.
+
+    `odc.stac.load` (con el `groupby` de `parametros_carga`) forma un grupo por (día solar,
+    offset) y le pone la hora de su primer ítem. Si dos tiles de la misma toma tienen
+    offsets distintos (por ejemplo uno reprocesado con baseline 04.00 y otro con 03.00),
+    sus grupos quedan con la misma fecha exacta, y `agregar_offset`, `agregar_nubes_escena`
+    y las series, que asocian los datos a cada fecha, no pueden distinguirlos.
+
+    Recorre los grupos en el orden de su clave y, si la hora del primer ítem de un grupo ya
+    la tiene otro grupo, desplaza todo el grupo en pasos de 1 ms hasta que sea única. Los
+    ítems desplazados son copias (los originales no cambian). Los que no son Sentinel-2 no
+    se tocan.
+
+    Args:
+        items (list): Ítems ya sin duplicados.
+
+    Returns:
+        list: Los mismos ítems, con copias desplazadas donde hacía falta.
+    """
+    items = list(items)
+    grupos = {}
+    for posicion, item in enumerate(items):
+        if es_sentinel2(item):
+            grupos.setdefault(agrupar_por_dia_y_offset(item), []).append(posicion)
+    ocupadas = set()
+    for clave in sorted(grupos):
+        posiciones = grupos[clave]
+        primera = min(items[i].datetime for i in posiciones)
+        corrimiento = dt.timedelta(0)
+        while primera + corrimiento in ocupadas:
+            corrimiento += dt.timedelta(milliseconds=1)
+        ocupadas.add(primera + corrimiento)
+        if corrimiento:
+            for i in posiciones:
+                copia = items[i].clone()
+                copia.datetime = items[i].datetime + corrimiento
+                items[i] = copia
     return items
 
 
@@ -776,7 +823,10 @@ def agregar_offset(datos, items):
     offset_de_fecha = {}
     for (_, offset), marca in fecha_de_grupo.items():
         if marca in offset_de_fecha:
-            raise ValueError(f"Dos grupos de imágenes tienen la misma fecha exacta ({marca}); no se puede asignar el offset.")
+            raise ValueError(
+                f"Dos grupos de imágenes tienen la misma fecha exacta ({marca}); no se puede asignar el offset. "
+                "Pasa los ítems por preparar_items(), que separa esas fechas por 1 ms."
+            )
         offset_de_fecha[marca] = offset
 
     # Un día con varios offsets debe verse completo en `datos`: si solo aparece uno de sus
