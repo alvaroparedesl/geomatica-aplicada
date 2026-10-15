@@ -7,12 +7,13 @@ Qué demuestra este archivo (sin internet): la parte de BÚSQUEDA de utils.stac.
   Colección 1 (sentinel-2-c1-l2a), "earthsearch-l2a" está DESACTIVADO (ValueError)
   y Landsat siempre es de Planetary Computer.
 * El aviso por el hueco de Earth Search c1 (casi sin imágenes entre el 29-12-2021 y el 07-12-2022).
-* `preparar_items`: quita duplicados, rechaza catálogos mezclados o desactivados
-  y ordena por fecha.
+* `preparar_items`: quita duplicados, rechaza catálogos mezclados o desactivados,
+  ordena por fecha y separa por 1 ms las fechas de grupos con offsets distintos.
 
 La búsqueda real contra los catálogos se prueba en test_red_catalogos.py (marca `red`).
 """
 
+import datetime as dt
 import warnings
 
 import pystac
@@ -207,3 +208,46 @@ def test_preparar_items_deja_pasar_landsat():
     landsat = leer_items("pc_2020-12-04")[0].clone()
     landsat.collection_id = "landsat-c2-l2"
     assert stac.preparar_items([landsat, landsat], verbose=False) == [landsat, landsat]
+
+
+def _tiles_de_una_misma_toma():
+    """Dos tiles con la misma hora exacta: uno reprocesado (04.00, offset -0,1) y otro no (03.00, offset 0)."""
+    base = leer_items("pc_2022-01-31")[0]
+    original, reprocesado = base.clone(), base.clone()
+    original.id += "_T19HBS"
+    original.properties.update({"s2:mgrs_tile": "19HBS", "s2:processing_baseline": "03.00", "eo:cloud_cover": 10})
+    reprocesado.id += "_T19HBT"
+    reprocesado.properties.update({"s2:mgrs_tile": "19HBT", "s2:processing_baseline": "04.00", "eo:cloud_cover": 50})
+    return original, reprocesado
+
+
+def test_preparar_items_separa_por_1_ms_las_fechas_con_offsets_distintos():
+    original, reprocesado = _tiles_de_una_misma_toma()
+    hora = original.datetime
+    assert original.datetime == reprocesado.datetime  # el caso del 2022-01-20 en Conguillio
+    listos = stac.preparar_items([original, reprocesado], verbose=False)
+    por_tile = {stac._tile(i): i for i in listos}
+    assert por_tile["19HBT"].datetime == hora  # el grupo de offset -0,1 va primero en el orden de las claves
+    assert por_tile["19HBS"].datetime == hora + dt.timedelta(milliseconds=1)
+    assert listos[0].datetime < listos[1].datetime  # y quedan ordenadas por fecha
+    assert original.datetime == reprocesado.datetime == hora  # los ítems de entrada no cambian
+    # preparar dos veces no vuelve a desplazar nada
+    otra_vez = stac.preparar_items(listos, verbose=False)
+    assert sorted(i.datetime for i in otra_vez) == sorted(i.datetime for i in listos)
+
+
+def test_preparar_items_no_toca_fechas_que_ya_son_distintas():
+    items = leer_items("pc_2026-06-06")  # dos satélites el mismo día, horas distintas
+    listos = stac.preparar_items(items, verbose=False)
+    assert sorted(i.datetime for i in listos) == sorted(i.datetime for i in items)
+    assert all(a is b for a, b in zip(sorted(listos, key=lambda i: i.id), sorted(items, key=lambda i: i.id)))
+
+
+def test_preparar_items_no_separa_tiles_con_el_mismo_offset():
+    base = leer_items("pc_2022-01-31")[0]
+    uno, dos = base.clone(), base.clone()
+    uno.properties.update({"s2:mgrs_tile": "19HBS", "s2:processing_baseline": "03.00"})
+    dos.properties.update({"s2:mgrs_tile": "18HYB", "s2:processing_baseline": "03.00"})
+    dos.id += "_2"
+    listos = stac.preparar_items([uno, dos], verbose=False)
+    assert listos[0].datetime == listos[1].datetime == base.datetime  # un solo grupo: misma fecha

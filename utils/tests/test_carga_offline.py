@@ -14,7 +14,8 @@ Garantías que se prueban:
 * `parametros_carga`: nombres de banda de cada catálogo, firma de Planetary Computer
   (`patch_url`), `groupby` (por día y offset en Sentinel-2) y rechazo de
   catálogos desactivados.
-* `preparar_items`: las versiones duplicadas no llegan a la carga.
+* `preparar_items`: las versiones duplicadas no llegan a la carga, y dos tiles de la misma
+  toma con offsets distintos quedan en fechas distintas (1 ms) para poder asignar su offset.
 * El `groupby` nunca junta en una fecha imágenes con offsets distintos.
 * `agregar_offset`: un offset por fecha, y errores claros si los datos no
   corresponden a los ítems (duplicados, catálogos mezclados, carga sin `groupby`).
@@ -339,3 +340,23 @@ def test_earthsearch_l2a_no_se_puede_cargar_sin_reactivarlo(tmp_path):
     items = _localizar(leer_items("es_2022-03-19"), tmp_path)
     with pytest.raises(ValueError, match="desactivado"):
         stac.preparar_items(items)
+
+
+def test_tiles_de_la_misma_toma_con_offsets_distintos_se_cargan_con_su_offset(tmp_path):
+    """El caso del 2022-01-20 (Conguillio): mismo instante, un tile con baseline 03.00 y otro con 04.00."""
+    from utils import series
+
+    base = leer_items("pc_2022-01-31")[0]
+    original, reprocesado = base.clone(), base.clone()
+    original.id += "_T19HBS"
+    original.properties.update({"s2:mgrs_tile": "19HBS", "s2:processing_baseline": "03.00", "eo:cloud_cover": 10})
+    reprocesado.id += "_T19HBT"
+    reprocesado.properties.update({"s2:mgrs_tile": "19HBT", "s2:processing_baseline": "04.00", "eo:cloud_cover": 50})
+    items = _localizar([original, reprocesado], tmp_path)
+    datos, refl = _cargar(items, "planetary")
+    assert datos.sizes["time"] == 2 and datos["time"].to_index().is_unique
+    assert sorted(datos[COORD_OFFSET].values) == [-0.1, 0.0]
+    _verificar_reflectancia(refl)  # cada tile con su offset: la misma reflectancia en ambos
+    datos = series.agregar_nubes_escena(datos, stac.preparar_items(items, verbose=False))
+    nubes = dict(zip(datos[COORD_OFFSET].values.tolist(), datos["nubes_escena"].values.tolist()))
+    assert nubes == {0.0: 10.0, -0.1: 50.0}  # y cada fecha conserva las nubes de su grupo
