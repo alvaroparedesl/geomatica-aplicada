@@ -17,7 +17,7 @@
 # | 4 | Tendencia lineal, y qué puede decir un solo año | 15 |
 # | 5 | Patrones estacionales | 10 |
 # | 6 | Anomalías con un año de datos (z-score) | 15 |
-# | 7 | Puente al bloque 7: climatología y anomalías bien hechas con Landsat | 10 |
+# | 7 | Preparando el bloque 7: climatología y anomalías con Landsat | 10 |
 # | 8 | Interpretación: pluma del Biobío, clorofila en la bahía y humedal | 5 |
 
 # %% [markdown]
@@ -105,7 +105,7 @@ print("B04 (reflectancia roja)")
 resumen_variable("b04")
 
 # %% [markdown]
-# Fíjate en el golfo de Arauco y en la bahía de Concepción: el máximo de B04 es muchísimo mayor que su p90 y la media queda por encima de la mediana. Son pocas fechas que se alejan mucho. Más adelante vemos si son turbidez real o un artefacto. Veamos las cuatro variables a la vez con cajas (la caja es del p25 al p75, la línea es la mediana):
+# Fíjate en el golfo de Arauco y en la bahía de Concepción: el máximo de B04 es mucho mayor que su p90 y la media queda por encima de la mediana. Son pocas fechas que se alejan mucho. Más adelante vemos si son turbidez real o un artefacto. Veamos las cuatro variables a la vez con cajas (la caja es del p25 al p75, la línea es la mediana):
 
 # %%
 fig, ejes = plt.subplots(1, 4, figsize=(13, 3.8))
@@ -142,7 +142,7 @@ cuenta = pd.DataFrame({"fechas con imagen": fechas_mes, "observaciones válidas 
 cuenta
 
 # %% [markdown]
-# En junio, julio y agosto hay la mitad de fechas que en verano, y bastantes de ellas con la ventana tapada. Eso afecta a **todo** lo que calculemos: un promedio de invierno se apoya en muy pocos datos.
+# En junio, julio y agosto hay la mitad de fechas que en verano, y bastantes de ellas con la ventana tapada. Eso afecta a **todo** lo que calculemos: un promedio de invierno se apoya en pocos datos.
 #
 # La **media móvil** suaviza el ruido para ver el comportamiento de fondo. `rolling` de pandas acepta una ventana en **días** (`"30D"`, adecuada para fechas irregulares) o en **observaciones** (un número entero); `min_periods` es el mínimo de observaciones que debe haber en la ventana para calcular la media y `center=True` centra la ventana en cada fecha. Compara las dos en la turbidez de la pluma del Biobío:
 
@@ -163,7 +163,7 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# La de 3 observaciones cubre **intervalos de tiempo distintos**: pocos días en verano y más de un mes en invierno. La de 30 días mide siempre lo mismo, pero no tiene valor donde hay menos de 3 observaciones en la ventana (por eso `min_periods=3`: es mejor un hueco que un promedio de un solo dato). Con fechas irregulares, la ventana en días es la más honesta.
+# La de 3 observaciones cubre **intervalos de tiempo distintos**: pocos días en verano y más de un mes en invierno. La de 30 días mide siempre lo mismo, pero no tiene valor donde hay menos de 3 observaciones en la ventana (por eso `min_periods=3`: es mejor un hueco que un promedio de un solo dato). Con fechas irregulares, conviene la ventana en días.
 #
 # **Tu turno 2.** Prueba `"15D"` y `"60D"` con `min_periods=2`. ¿Qué pasa con los picos de B04 (en noviembre y en agosto-septiembre) al ensanchar la ventana? ¿Y con los huecos de invierno?
 
@@ -208,7 +208,7 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# **Qué puede y qué no puede decir un solo año.** La recta de los 12 meses sube; la de los últimos seis meses **baja**, y la de los primeros seis sube más. Una pendiente "por año" calculada con un año entero no es una tendencia del clima ni del ambiente: mezcla la **estacionalidad** (que sube y baja dentro del año) con cualquier cambio de verdad, y no hay forma de separarlas con un solo ciclo. Además:
+# **Qué puede y qué no puede decir un solo año.** La recta de los 12 meses sube; la de los últimos seis meses **baja**, y la de los primeros seis sube más. Una pendiente "por año" calculada con un año entero no es una tendencia del clima ni del ambiente: mezcla la **estacionalidad** (que sube y baja dentro del año) con cualquier cambio real, y no hay forma de separarlas con un solo ciclo. Además:
 #
 # * El valor p supone observaciones independientes. En una serie temporal no lo son (un día se parece al siguiente), así que **sobreestima la significancia**. Un p de 0,0001 aquí no demuestra nada.
 # * Los datos no están repartidos parejo: hay muchas más fechas en verano que en invierno, y eso inclina la recta.
@@ -287,7 +287,7 @@ pd.concat([por_estacion.round(3), n_estacion], axis=1)
 #
 # Una **anomalía** es un valor que se aleja de lo esperado. El z-score la mide en desviaciones estándar: `z = (valor - media) / desviación`. Un |z| mayor que 2 es poco habitual. Hay dos formas de definir "lo esperado":
 #
-# * `referencia="mes"`: la media y la desviación **del mismo mes del año**. Quita el ciclo estacional (un valor de enero se compara con enero). Es lo correcto, pero necesita muchos años.
+# * `referencia="mes"`: la media y la desviación **del mismo mes del año**. Quita el ciclo estacional (un valor de enero se compara con enero), pero necesita muchos años.
 # * `referencia="total"`: la media y la desviación **de toda la serie**. Mezcla estación con anomalía.
 #
 # Con un año de datos, cada mes tiene entre 2 y 11 observaciones, todas del mismo año. Veamos qué pasa con B04, contando las fechas con |z| > 2 con cada referencia:
@@ -309,7 +309,7 @@ pd.DataFrame(filas).set_index("punto")
 # * La media y la desviación de cada mes salen de **2 a 11 valores de un único año**, y el valor extremo forma parte de ese mismo mes: se "infla" su propia referencia. Con *n* valores, un z calculado así no puede pasar de (*n* - 1) / raíz(*n*); con 2 valores no pasa de 0,7. Un mes con pocos datos **no puede marcar nada**.
 # * Los conteos de `"mes"` casi no se parecen a los de `"total"`: miden otra cosa (cuánto se aleja un valor del resto **de su propio mes**), no cuánto se aleja de lo normal.
 #
-# Con un año ninguna de las dos cuentas es una anomalía en sentido estricto. **En este bloque usamos `referencia="total"`**: es más sensible cuando la serie es corta y es simple de explicar. Su costo es que la estación se cuela: si una variable tiene un ciclo anual fuerte, los z altos tenderán a caer en la misma época (no son anomalías, es la estación). Las anomalías mensuales bien hechas vienen más abajo, con una serie larga.
+# Con un año ninguna de las dos cuentas es una anomalía en sentido estricto. **En este bloque usamos `referencia="total"`**: es más sensible cuando la serie es corta y es simple de explicar. Su costo es que la estación se cuela: si una variable tiene un ciclo anual fuerte, los z altos tenderán a caer en la misma época (no son anomalías, es la estación). Las anomalías mensuales vienen más abajo, con una serie larga.
 #
 # Calculamos el z-score de B04 en la pluma del Biobío y marcamos las fechas con |z| > 2:
 
@@ -332,7 +332,7 @@ plt.tight_layout()
 plt.show()
 
 # %% [markdown]
-# Una fecha atípica **no es todavía un evento**. Antes de interpretar, mira qué hay detrás: ¿cuánta nube tenía la escena y qué fracción de la ventana pasó la máscara? Un valor atípico con muy pocos píxeles válidos o con mucha nube en la escena es sospechoso.
+# Una fecha atípica **no es todavía un evento**. Antes de interpretar, mira qué hay detrás: ¿cuánta nube tenía la escena y qué fracción de la ventana pasó la máscara? Un valor atípico con pocos píxeles válidos o con mucha nube en la escena es sospechoso.
 
 # %%
 revision = tabla[(tabla["id"] == "biobio_pluma") & tabla["fecha"].isin(raras.index)][["fecha", "b04", "nubes_escena", "pixeles_validos"]]
@@ -359,9 +359,9 @@ tabla[(tabla["id"] == "golfo_arauco") & (tabla["fecha"] == fecha_max)][["fecha",
 # z_ndci[z_ndci.abs() > 2]
 
 # %% [markdown]
-# ## 7. Puente al bloque 7: climatología y anomalías bien hechas con Landsat
+# ## 7. Preparando el bloque 7: climatología y anomalías con Landsat
 #
-# Para hacer anomalías **con respecto a una climatología mensual de verdad** se necesita una serie larga. La temperatura de superficie de **Landsat 8 y 9** en el centro de la bahía de Concepción tiene datos desde **2013**: unas 10 a 25 observaciones válidas por año (Landsat pasa cada 8 días, pero las nubes borran muchas fechas). Esa es la serie con la que trabajaremos en el bloque 7.
+# Para hacer anomalías **con respecto a una climatología mensual** se necesita una serie larga. La temperatura de superficie de **Landsat 8 y 9** en el centro de la bahía de Concepción tiene datos desde **2013**: unas 10 a 25 observaciones válidas por año (Landsat pasa cada 8 días, pero las nubes borran muchas fechas). Esa es la serie con la que trabajaremos en el bloque 7.
 #
 # El parquet de Landsat tiene la misma forma que el de Sentinel-2, pero con temperatura y reflectancia ya calibradas. `controlar_calidad_agua` descarta las observaciones que la reflectancia delata como nube, y la serie de un punto se saca igual que antes (aquí quitamos la hora de la toma, porque solo importa el día). Las fechas con nubes quedan como NaN: no se rellenan.
 
@@ -438,7 +438,7 @@ n_b04 = tabla.dropna(subset=["b04"]).query("id == 'biobio_pluma'").groupby(tabla
 pd.concat([mensual_b04.round(3), n_b04], axis=1)
 
 # %% [markdown]
-# La pluma tiene una turbidez mucho mayor que el golfo y la bahía en noviembre y diciembre, y en agosto y septiembre; en otoño es casi igual a las demás. Es compatible con descargas del río (más caudal en la época de lluvias y por el deshielo de primavera), pero también podrían contribuir el viento que resuspende sedimento o el reflejo del sol. En junio y julio hay muy pocas fechas válidas (`n` de 2 a 3), así que esos meses no dicen mucho. Para confirmarlo harían falta la lluvia y el caudal del río (por ejemplo, de la Dirección General de Aguas).
+# La pluma tiene una turbidez mucho mayor que el golfo y la bahía en noviembre y diciembre, y en agosto y septiembre; en otoño es casi igual a las demás. Es compatible con descargas del río (más caudal en la época de lluvias y por el deshielo de primavera), pero también podrían contribuir el viento que resuspende sedimento o el reflejo del sol. En junio y julio hay pocas fechas válidas (`n` de 2 a 3), así que esos meses no dicen mucho. Para confirmarlo harían falta la lluvia y el caudal del río (por ejemplo, de la Dirección General de Aguas).
 #
 # **b) Clorofila en la bahía.** El NDCI sube con la clorofila, pero en agua muy oscura la razón es inestable. Mediana mensual en las bahías y el golfo, con el número de fechas:
 
@@ -449,7 +449,7 @@ mensual_ndci = (tabla[tabla["id"].isin(["bahia_concepcion", "san_vicente", "golf
 mensual_ndci.round(3)
 
 # %% [markdown]
-# El NDCI de la bahía de San Vicente se mantiene cerca de cero entre octubre y mayo y baja algo (hasta -0,1) de junio a septiembre. En la bahía de Concepción y el golfo de Arauco baja mucho más en invierno, pero justo ahí hay solo 2 a 6 fechas por mes y la reflectancia roja es de apenas unas milésimas (agua muy oscura): una razón entre números diminutos oscila mucho. Una conclusión honesta es que **primavera y verano no muestran un aumento claro de clorofila en estos datos** y que el invierno es demasiado ruidoso para decidir. Comparar con clorofila medida en terreno o con un producto de color del océano sería el siguiente paso.
+# El NDCI de la bahía de San Vicente se mantiene cerca de cero entre octubre y mayo y baja algo (hasta -0,1) de junio a septiembre. En la bahía de Concepción y el golfo de Arauco baja mucho más en invierno, pero justo ahí hay solo 2 a 6 fechas por mes y la reflectancia roja es de apenas unas milésimas (agua muy oscura): una razón entre números diminutos oscila mucho. Lo que se puede concluir es que **primavera y verano no muestran un aumento claro de clorofila en estos datos** y que el invierno es demasiado ruidoso para decidir. Comparar con clorofila medida en terreno o con un producto de color del océano sería el siguiente paso.
 #
 # **c) El NDVI del humedal.** Mediana mensual del humedal Rocuant-Andalién:
 

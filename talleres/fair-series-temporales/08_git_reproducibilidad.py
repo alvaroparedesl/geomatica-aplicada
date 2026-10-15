@@ -282,14 +282,14 @@ verificar_config_limpia(demo, token="TOKEN_FALSO_DE_EJEMPLO")
 shutil.rmtree(demo)    # borramos el repositorio de la demostración
 
 # %% [markdown]
-# La comprobación detecta el secreto escrito en la URL. Más abajo la usaremos con el repositorio de verdad, **después** del push.
+# La comprobación detecta el secreto escrito en la URL. Más abajo la usaremos con el repositorio de GitHub, **después** del push.
 #
 # ¿Cómo sabemos que `git_con_token` funciona? Lo probamos más adelante con tu repositorio. Fíjate en lo que **no** hace: el token nunca aparece en el comando (`git push github main`), que es lo que se ve en pantalla, en los mensajes de error ni en el repositorio.
 
 # %% [markdown]
 # ## 4. Práctica local: crear un repositorio y hacer commits
 #
-# Ahora trabajamos con Git de verdad. Para poder ejecutar el cuaderno de principio a fin en cualquier lugar, el repositorio de práctica vive en una carpeta temporal. En Colab será tu carpeta de trabajo; el paso final lo subirá a GitHub.
+# Ahora trabajamos con Git. Para poder ejecutar el cuaderno de principio a fin en cualquier lugar, el repositorio de práctica vive en una carpeta temporal. En Colab será tu carpeta de trabajo; el paso final lo subirá a GitHub.
 #
 # Empezamos con el **código de los cuadernos anteriores**, tal como suele quedar: un script plano que va de arriba abajo (cargar la serie de temperatura de Landsat, detectar episodios, calcular anomalías de Sentinel-2). Los parquet se leen con `pd.read_parquet`, como en los bloques anteriores; `abrir_dato` solo busca el archivo en la carpeta `datos/` del curso (o lo descarga de GitHub si no está), porque el script vive en tu proyecto y no junto a los datos.
 
@@ -433,7 +433,7 @@ git("commit", "-q", "-m", "feat: guardar episodios y anomalías en resultados/ (
 # %% [markdown]
 # ### Cuarto commit: una persona que no eres tú tiene que poder ejecutarlo
 #
-# Un `README.md` dice qué hace el proyecto y cómo ejecutarlo. Sin él, el repositorio no es reutilizable aunque el código esté perfecto.
+# Un `README.md` dice qué hace el proyecto y cómo ejecutarlo. Sin él, el repositorio no es reutilizable aunque el código funcione.
 
 # %%
 README = f'''# Análisis del taller FAIR: eventos extremos y anomalías
@@ -463,7 +463,7 @@ git("commit", "-q", "-m", "docs: agregar README con instrucciones para reproduci
 git("log", "--oneline", "--stat", cwd=PROYECTO)
 
 # %% [markdown]
-# Ya tienes **cuatro commits**: cada uno con un propósito claro, un mensaje que lo explica y un cambio que se puede revisar por separado. Eso es trazabilidad. `git log -p` muestra la historia completa con todos los cambios.
+# Ya tienes **cuatro commits**: cada uno con un propósito, un mensaje que lo explica y un cambio que se puede revisar por separado. Eso es trazabilidad. `git log -p` muestra la historia completa con todos los cambios.
 
 # %% [markdown]
 # ### Tu turno 1: ramas
@@ -595,7 +595,7 @@ else:
 # %% [markdown]
 # ## 9. Verificar que el proyecto se ejecuta desde cero
 #
-# La prueba definitiva de reproducibilidad: **que otra persona, con una copia limpia, obtenga los mismos resultados**. Lo simulamos así:
+# La prueba de reproducibilidad: **que otra persona, con una copia limpia, obtenga los mismos resultados**. Lo simulamos así:
 #
 # 1. Ejecutamos el análisis en tu carpeta y guardamos una huella (hash) de los resultados.
 # 2. **Clonamos** el repositorio en una carpeta nueva, vacía: solo lo que está en la historia de Git.

@@ -53,8 +53,8 @@ DATOS = RAIZ / "talleres" / "fair-series-temporales" / "datos"  # carpeta con lo
 # | 0:00 a 0:30 | **La pregunta.** ¿Qué fenómeno ambiental miraste y por qué importa? Una frase | Un mapa con tus puntos o tu zona |
 # | 0:30 a 1:30 | **Los datos.** ¿De dónde salen (STAC, Landsat o Sentinel-2), qué periodo, qué resolución, qué limitaciones? | La tabla de tu serie o su metadato |
 # | 1:30 a 3:00 | **El método.** Qué hiciste con los datos, en 3 pasos (por ejemplo: máscara de nubes, serie por punto, anomalías o eventos) | Un esquema simple o el código clave, no todo el cuaderno |
-# | 3:00 a 4:30 | **El resultado principal.** Un solo gráfico, bien explicado: qué se ve y qué significa | **Un** gráfico, con título y ejes legibles |
-# | 4:30 a 5:30 | **Lo que no sabes.** Una limitación o una sorpresa (por ejemplo, las nubes de Landsat y Sentinel-2, o la resolución de la banda térmica) y cómo la trataste | Una frase honesta |
+# | 3:00 a 4:30 | **El resultado principal.** Un solo gráfico y su explicación: qué se ve y qué significa | **Un** gráfico, con título y ejes legibles |
+# | 4:30 a 5:30 | **Lo que no sabes.** Una limitación o una sorpresa (por ejemplo, las nubes de Landsat y Sentinel-2, o la resolución de la banda térmica) y cómo la trataste | Una frase |
 # | 5:30 a 6:00 | **Reproducibilidad.** El enlace a tu repositorio y qué metadatos tiene tu depósito | La URL de GitHub y el DOI (que obtendrás en este cuaderno) |
 #
 # ### Consejos
@@ -63,7 +63,7 @@ DATOS = RAIZ / "talleres" / "fair-series-temporales" / "datos"  # carpeta con lo
 # * **Un gráfico bueno vale más que cinco regulares.** Tamaño de letra legible, título que diga la conclusión, unidades en los ejes.
 # * **Muestra tus decisiones, no solo tus resultados.** "Usé la máscara SCL en vez del filtro de la escena porque..." es lo más valioso para quien te escucha.
 # * **Cuenta lo que no funcionó.** Un vacío, una imagen mala, una prueba que descartaste: eso es ciencia, y ayuda a otros.
-# * **Ensaya con cronómetro.** Seis minutos pasan muy rápido. Si te sobran 30 segundos, bien; si te faltan 2 minutos, recorta.
+# * **Ensaya con cronómetro.** Seis minutos pasan rápido. Si te sobran 30 segundos, bien; si te faltan 2 minutos, recorta.
 #
 # ### Qué hace el público
 #
@@ -152,7 +152,7 @@ else:
 # 1. **Tu cuaderno** (`.ipynb`): el análisis completo.
 # 2. **Tu parquet de datos derivados**: la tabla que produjiste, con sus metadatos dentro del archivo.
 #
-# Para que el cuaderno funcione para todo el grupo, por defecto usa el cuaderno del bloque 7 y su tabla de **episodios cálidos y fríos de la temperatura de superficie** (`episodios_landsat_concepcion.parquet`; si no la guardaste, se genera aquí en pocos segundos). **Cámbialos por los tuyos**: la ruta de tu cuaderno (el que subiste a GitHub en el bloque 8) y la de tu parquet (por ejemplo, la serie de Sentinel-2 del bloque 4). Si cambias los archivos, cambia también la descripción de la sección 5: debe decir lo que realmente subes.
+# Para que el cuaderno funcione para todo el grupo, por defecto usa el cuaderno del bloque 7 y su tabla de **episodios cálidos y fríos de la temperatura de superficie** (`episodios_landsat_concepcion.parquet`; si no la guardaste, se genera aquí en pocos segundos). **Cámbialos por los tuyos**: la ruta de tu cuaderno (el que subiste a GitHub en el bloque 8) y la de tu parquet (por ejemplo, la serie de Sentinel-2 del bloque 4). Si cambias los archivos, cambia también la descripción de la sección 5: debe decir lo que subes.
 
 # %%
 # @title Qué archivos subir y quién eres (cámbialos por los tuyos)
@@ -414,7 +414,7 @@ class ZenodoError(RuntimeError):
 
 
 def _revisar(respuesta, paso):
-    """Lanza un error claro (sin encabezados ni token) si Zenodo no respondió con éxito."""
+    """Lanza un error (sin encabezados ni token) si Zenodo no respondió con éxito."""
     if respuesta.ok:
         return respuesta
     try:
@@ -625,7 +625,7 @@ except Exception as error:   # sin internet o el Sandbox no responde
 # Cuando hayas publicado:
 #
 # 1. Abre el registro en una **ventana de incógnito** (sin tu sesión). ¿Se ve todo? ¿Se pueden descargar los archivos?
-# 2. Cópiale el DOI a un compañero o compañera para que ejecute `verificar_recuperacion("10.5072/zenodo.XXXX")` con **tu** DOI en **su** cuaderno. Es la prueba real de accesibilidad.
+# 2. Cópiale el DOI a un compañero o compañera para que ejecute `verificar_recuperacion("10.5072/zenodo.XXXX")` con **tu** DOI en **su** cuaderno. Es la prueba de accesibilidad.
 # 3. Busca tu registro en el Sandbox con una palabra clave en español, otra en inglés y una con y sin tilde (`Biobío` / `Biobio`): ¿aparece en todas?
 # 4. En la página del registro, mira la sección de **Citar** y de **Exportar** (DataCite, JSON): eso es la **interoperabilidad**.
 #
@@ -639,7 +639,7 @@ except Exception as error:   # sin internet o el Sandbox no responde
 # - [ ] ¿Es un trabajo **terminado** y que quieres que se cite? Un borrador o una prueba no merece un DOI.
 # - [ ] ¿Tienes **derecho a publicar** los datos y el código? Revisa la licencia de las fuentes y los acuerdos con tu institución o financiamiento.
 # - [ ] ¿Los datos contienen información **personal, sensible o protegida** (ubicación de especies amenazadas, sitios sagrados, personas)? Si es así, no se publica tal cual.
-# - [ ] ¿Elegiste una **licencia** conscientemente (CC BY, CC0, GPL, MIT) y la citas en el registro?
+# - [ ] ¿Elegiste una **licencia** (CC BY, CC0, GPL, MIT) y la citas en el registro?
 # - [ ] ¿La **autoría** está completa y con ORCID? Cambiar la autoría después es posible pero queda registrado.
 # - [ ] ¿La descripción dice **qué hay, de dónde viene, qué periodo cubre y qué limitaciones tiene**, incluidos los vacíos de datos?
 # - [ ] ¿Las **fuentes** están como identificadores relacionados?
@@ -656,7 +656,7 @@ except Exception as error:   # sin internet o el Sandbox no responde
 # * Zenodo se usa por una **API REST** en cinco pasos: crear el borrador, subir archivos, poner metadatos, publicar y verificar. Los tres primeros se pueden deshacer; el cuarto, no.
 # * **Practica siempre en el Sandbox** (`sandbox.zenodo.org`, DOI `10.5072`). Un DOI real es permanente: solo para trabajo real.
 # * Verifica siempre por el DOI y por la **huella md5** que lo publicado es lo que subiste.
-# * Una presentación de 6 minutos tiene **un mensaje, un gráfico bueno, una limitación honesta y un enlace** a tu repositorio y tu DOI.
+# * Una presentación de 6 minutos tiene **un mensaje, un gráfico, una limitación y un enlace** a tu repositorio y tu DOI.
 #
 # ### Cierre del taller
 #

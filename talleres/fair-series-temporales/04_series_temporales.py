@@ -88,13 +88,13 @@ from utils.viz import mapa_puntos
 
 warnings.filterwarnings("ignore", category=UserWarning)  # avisos de GDAL por escenas sin georreferencia
 
-# Una paleta que se distingue bien con daltonismo (Okabe-Ito), una por punto
+# Una paleta distinguible con daltonismo (Okabe-Ito), una por punto
 PALETA = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9"]
 
 # %% [markdown]
 # ## Dos funciones para pasar de DN a reflectancia
 #
-# En el bloque 3 convertiste a mano una imagen: `reflectancia = DN * 0,0001 + offset`, con el offset según el baseline de la imagen. Aquí hay muchas fechas, cada una con su baseline, así que dejamos esos pasos en dos funciones **escritas aquí mismo**, para que puedas leerlas (y cambiarlas). Sirven solo para Sentinel-2 de Planetary Computer.
+# En el bloque 3 convertiste a mano una imagen: `reflectancia = DN * 0,0001 + offset`, con el offset según el baseline de la imagen. Aquí hay muchas fechas, cada una con su baseline, así que dejamos esos pasos en dos funciones **escritas aquí**, para que puedas leerlas (y cambiarlas). Sirven solo para Sentinel-2 de Planetary Computer.
 
 # %%
 def agregar_offset(datos, items):
@@ -137,7 +137,7 @@ def reflectancia_sentinel2(datos):
 #
 # Más abajo medimos cuánto cambia cada una en nuestros puntos.
 #
-# **Puntos y ventanas.** Cargar el área completa que encierra todos los puntos es mucho más pesado que cargar una **ventana pequeña** (unos 300 x 300 m) alrededor de cada uno. Para series en puntos, la ventana alcanza: de cada fecha resumimos sus píxeles con la mediana, que se defiende bien de algún píxel raro.
+# **Puntos y ventanas.** Cargar el área completa que encierra todos los puntos es mucho más pesado que cargar una **ventana pequeña** (unos 300 x 300 m) alrededor de cada uno. Para series en puntos, la ventana alcanza: de cada fecha resumimos sus píxeles con la mediana, que resiste algún píxel raro.
 
 # %% [markdown]
 # ## 2. Los puntos de muestreo
@@ -249,7 +249,7 @@ print(f"Caja completa ({ancho_m / 1000:.0f} x {alto_m / 1000:.0f} km): unos {gb_
 print(f"Seis ventanas de 300 x 300 m: unos {mb_ventanas:.0f} MB")
 
 # %% [markdown]
-# Por eso cargamos ventanas. `cargar_ventanas` repite para **cada** punto exactamente los pasos que acabas de ver (`bbox_punto`, el filtro de escenas con `shape(...).intersects`, `parametros_carga`, `odc.stac.load`, `agregar_offset`, `agregar_nubes_escena`; usa la versión de `utils`, que hace lo mismo que la tuya) y al final lee todos los píxeles de una vez, en paralelo. Lanza la celda y espera un par de minutos: es la lectura de red de las seis ventanas.
+# Por eso cargamos ventanas. `cargar_ventanas` repite para **cada** punto los pasos que acabas de ver (`bbox_punto`, el filtro de escenas con `shape(...).intersects`, `parametros_carga`, `odc.stac.load`, `agregar_offset`, `agregar_nubes_escena`; usa la versión de `utils`, que hace lo mismo que la tuya) y al final lee todos los píxeles de una vez, en paralelo. Lanza la celda y espera un par de minutos: es la lectura de red de las seis ventanas.
 #
 # > En una prueba anterior (otra zona) las ventanas tardaron 78 s con 313 MB y la caja completa 306 s. Con los puntos de este taller, la lectura de tres meses la medimos más abajo en esta misma celda.
 
@@ -289,7 +289,7 @@ print(ventana[["offset_reflectancia", "nubes_escena"]].to_dataframe().head(5).to
 # | 10 | cirrus | sí |
 # | 11 | nieve o hielo | no |
 #
-# Miremos qué clases hay realmente en las ventanas de nuestros puntos (porcentaje de los píxeles de las 39 fechas, con nubes de hasta 100 % en la escena):
+# Miremos qué clases hay en las ventanas de nuestros puntos (porcentaje de los píxeles de las 39 fechas, con nubes de hasta 100 % en la escena):
 
 # %%
 clases = {0: "sin datos", 1: "saturado", 2: "áreas oscuras", 3: "sombra de nube", 4: "vegetación", 5: "suelo desnudo",
@@ -427,7 +427,7 @@ plt.show()
 #
 # * El **filtro de escena** descarta fechas completas y es barato, pero ciego a tu punto. Con límites bajos (10 %) casi no hay fechas contaminadas, pero tampoco quedan muchas fechas: en invierno son pocas.
 # * La **máscara SCL** actúa píxel por píxel. Con límites altos de nubes es la que evita que la nube entre en la serie y conserva fechas despejadas en el punto aunque la escena esté nublada en otro lado.
-# * Lo mejor es usar **las dos**: un filtro de escena laxo (60 % en el respaldo) para no cargar fechas inútiles y la máscara SCL para el resto.
+# * Usa **las dos**: un filtro de escena laxo (60 % en el respaldo) para no cargar fechas inútiles y la máscara SCL para el resto.
 # * Estas cifras son de tres meses de invierno. En verano las nubes son menos y la diferencia se achica.
 #
 # **Tu turno 2.** Repite la comparación excluyendo además la clase 7 (nube de probabilidad baja o sin clasificar) y la 2 (áreas oscuras). Se pasan como códigos a `excluir`: la lista por defecto es `("sin_datos", "saturado", "sombra_nube", "nube_media", "nube_alta", "cirrus")` y puedes agregarle números. ¿Cambia el número de fechas válidas? ¿Qué pasa con el humedal?
@@ -489,7 +489,7 @@ print("Título:", leidos["titulo"])
 # %% [markdown]
 # ## 8. La serie de 12 meses de respaldo y su gráfico
 #
-# La carga de 12 meses toma bastante más que la de tres. Para los bloques siguientes usamos la serie ya preparada con el mismo flujo, `series_sentinel2_concepcion.parquet` (octubre de 2025 a septiembre de 2026, filtro de escena de 60 %). Es también el respaldo si la carga en vivo falla.
+# La carga de 12 meses toma más tiempo que la de tres. Para los bloques siguientes usamos la serie ya preparada con el mismo flujo, `series_sentinel2_concepcion.parquet` (octubre de 2025 a septiembre de 2026, filtro de escena de 60 %). Es también el respaldo si la carga en vivo falla.
 #
 # Antes de usarla, una prueba de **reproducibilidad**: las fechas que ambos tienen en común (junio a agosto de 2026, hasta 60 % de nubes de escena) deberían tener exactamente los mismos valores.
 

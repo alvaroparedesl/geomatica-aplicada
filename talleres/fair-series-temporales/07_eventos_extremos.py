@@ -5,7 +5,7 @@
 #
 # **Bloque 7 del taller "Datos FAIR, series temporales satelitales y detección de anomalías con Python"** (unos 100 minutos).
 #
-# Hasta aquí calculaste anomalías: cuánto se aleja un valor de lo normal para esa época del año. Ahora damos el paso siguiente: **decidir cuándo una anomalía es un episodio extremo**. Lo haremos con la **temperatura de superficie de Landsat 8 y 9** en el agua de la bahía de Concepción y sus alrededores, con una serie de más de 13 años y una pregunta concreta: ¿hubo episodios anormalmente cálidos o fríos, cuáles fueron los más importantes y ocurre alguno ahora?
+# Hasta aquí calculaste anomalías: cuánto se aleja un valor de lo normal para esa época del año. Ahora damos el paso siguiente: **decidir cuándo una anomalía es un episodio extremo**. Lo haremos con la **temperatura de superficie de Landsat 8 y 9** en el agua de la bahía de Concepción y sus alrededores, con una serie de más de 13 años y una pregunta: ¿hubo episodios anormalmente cálidos o fríos, cuáles fueron los más importantes y ocurre alguno ahora?
 #
 # Landsat no es un producto diseñado para la temperatura del mar: pasa **cada 8 días** (con los dos satélites), las **nubes** borran muchas fechas (unas 10 a 25 observaciones útiles por año) y la banda térmica es de **100 m**. Esas limitaciones son el corazón del bloque, porque son las de casi cualquier serie satelital real.
 #
@@ -13,7 +13,7 @@
 #
 # 1. **Calibrar** los números digitales de Landsat a temperatura (°C) y a reflectancia, y comprobar que coinciden con la tabla preparada.
 # 2. Mirar una **serie irregular**: cuántas fechas útiles hay, qué huecos dejan las nubes y cómo **controlar la calidad** con la reflectancia.
-# 3. Construir **paso a paso, en pandas legible, una climatología** que funciona con pocas observaciones (la idea de Hobday, adaptada).
+# 3. Construir **paso a paso, en pandas, una climatología** que funciona con pocas observaciones (la idea de Hobday, adaptada).
 # 4. Detectar **episodios** de observaciones anómalas seguidas, sin cruzar huecos largos.
 # 5. Usar lo que Landsat tiene de especial: **temperatura y reflectancia en el mismo instante** (agua frente a tierra, turbidez).
 # 6. Comparar los umbrales clásicos con **Isolation Forest** (aprendizaje automático), también con varias variables a la vez.
@@ -246,7 +246,7 @@ print(f"Mediana de {intervalos.median():.0f} días entre observaciones válidas,
 #
 # ### 2.2 Control de calidad: la reflectancia delata las nubes que la máscara no vio
 #
-# La máscara de Landsat (`qa_pixel`) marca las nubes de confianza alta. Una nube delgada o la neblina costera pueden quedar sin marcar y medirse como "agua muy fría". Pero tenemos algo a favor: **medimos temperatura y reflectancia a la vez**. El agua abierta tiene una firma clara (reflectancia roja y SWIR1 casi 0); una nube es brillante. Veamos las observaciones más frías de los cinco puntos de agua junto a su reflectancia roja.
+# La máscara de Landsat (`qa_pixel`) marca las nubes de confianza alta. Una nube delgada o la neblina costera pueden quedar sin marcar y medirse como "agua muy fría". Pero tenemos algo a favor: **medimos temperatura y reflectancia a la vez**. El agua abierta tiene una firma propia (reflectancia roja y SWIR1 casi 0); una nube es brillante. Veamos las observaciones más frías de los cinco puntos de agua junto a su reflectancia roja.
 
 # %%
 AGUA = ["bahia_concepcion", "san_vicente", "biobio_pluma", "golfo_arauco", "laguna_grande"]
@@ -273,7 +273,7 @@ st_qc = tabla_qc[tabla_qc["id"] == PUNTO].set_index("fecha")["st_c"].astype(floa
 print(f"\n{PUNTO}: {st.notna().sum()} observaciones antes del control, {st_qc.notna().sum()} después")
 
 # %% [markdown]
-# **Descartar sin mirar es peligroso**: una regla demasiado dura borraría eventos reales. Esta es deliberadamente simple (solo quita lo que el agua **no puede** reflejar, por brillo) y no es perfecta: puede dejar pasar neblina delgada y puede descartar alguna floración real de algas o agua muy turbia (que también brilla). Quedan además observaciones sospechosas que ninguna regla simple resuelve (las veremos en las secciones 4 y 5, cuando **varios puntos coinciden** en la misma fecha).
+# **Descartar sin mirar es peligroso**: una regla demasiado dura borraría eventos reales. Esta regla solo quita lo que el agua **no puede** reflejar, por brillo, y tiene límites: puede dejar pasar neblina delgada y puede descartar alguna floración real de algas o agua muy turbia (que también brilla). Quedan además observaciones sospechosas que ninguna regla simple resuelve (las veremos en las secciones 4 y 5, cuando **varios puntos coinciden** en la misma fecha).
 #
 # ### Tu turno 1: ¿qué pasa en otro punto?
 #
@@ -584,7 +584,7 @@ plt.show()
 pd.DataFrame(filas).set_index("punto")
 
 # %% [markdown]
-# Las correlaciones son **negativas y de débiles a moderadas** (de -0,2 a -0,4): las observaciones más brillantes tienden a ser más frías. Hay dos lecturas posibles y **los datos no permiten elegir**: (1) **residuo de nube o neblina**, que brilla y enfría la medida y que el control de calidad no eliminó del todo; (2) una **pluma o un día de agua más turbia y más fría** (por ejemplo, tras una lluvia de invierno). Sería necesario un dato más (caudal, viento, una imagen sin nubes del día) para decidir. Lo valioso es tener **las dos variables en la misma tabla**: la reflectancia sirvió para el control de calidad de la sección 2 y ahora para formular preguntas.
+# Las correlaciones son **negativas y de débiles a moderadas** (de -0,2 a -0,4): las observaciones más brillantes tienden a ser más frías. Hay dos lecturas posibles y **los datos no permiten elegir**: (1) **residuo de nube o neblina**, que brilla y enfría la medida y que el control de calidad no eliminó del todo; (2) una **pluma o un día de agua más turbia y más fría** (por ejemplo, tras una lluvia de invierno). Sería necesario un dato más (caudal, viento, una imagen sin nubes del día) para decidir. Tener **las dos variables en la misma tabla** sirve dos veces: la reflectancia fue control de calidad en la sección 2 y ahora ayuda a formular preguntas.
 
 # %% [markdown]
 # ## 6. Umbrales clásicos frente a aprendizaje automático
@@ -669,7 +669,7 @@ pd.DataFrame(filas).set_index("contaminación")
 # | Explicación | "Estuvo 2 veces seguidas sobre el p90" | "Su puntaje de aislamiento fue bajo" |
 # | Cuándo conviene | Cuando se necesita comunicar un criterio simple | Para explorar y descubrir comportamientos raros, o con variables sin estándar |
 #
-# Ninguno es "mejor": responden preguntas distintas. Un buen flujo de trabajo usa los umbrales para **definir** episodios y Isolation Forest (u otros métodos) para **explorar** lo que esa definición no captura, como una observación rara en la reflectancia.
+# Ninguno es "mejor": responden preguntas distintas. Un flujo de trabajo posible usa los umbrales para **definir** episodios y Isolation Forest (u otros métodos) para **explorar** lo que esa definición no captura, como una observación rara en la reflectancia.
 
 # %% [markdown]
 # ### Una nota sobre Hobday y las olas de calor marinas
@@ -688,7 +688,7 @@ print(malla_bruta.sizes, "| fechas:", str(malla_bruta["time"].values[0])[:10], "
 print(f"Mínimo de la malla: {float(malla_bruta.min()):.1f} °C | máximo: {float(malla_bruta.max()):.1f} °C")
 
 # %% [markdown]
-# **Un mínimo de -43 °C no es una temperatura del suelo ni del agua de Concepción**: es justo el piso de la calibración (230 K), el valor de una nube muy fría que la máscara no marcó (las más frías ya quedaron como NaN). La malla (a diferencia de la tabla por punto) no tiene el control de calidad con la reflectancia, porque solo guarda la banda térmica. Hacemos un control **simple y declarado**: en esta zona, a esa hora (media mañana), ni el mar ni la tierra bajan de unos 3 °C, así que descartamos lo que está bajo ese valor.
+# **Un mínimo de -43 °C no es una temperatura del suelo ni del agua de Concepción**: es justo el piso de la calibración (230 K), el valor de una nube muy fría que la máscara no marcó (las más frías ya quedaron como NaN). La malla (a diferencia de la tabla por punto) no tiene el control de calidad con la reflectancia, porque solo guarda la banda térmica. Hacemos un control **declarado**: en esta zona, a esa hora (media mañana), ni el mar ni la tierra bajan de unos 3 °C, así que descartamos lo que está bajo ese valor.
 
 # %%
 muy_frio = (malla_bruta < 3).sum() / malla_bruta.notnull().sum()
@@ -806,7 +806,7 @@ print([k.decode() for k in pq.read_schema(ruta_episodios).metadata if k != b"pan
 #
 # * **Landsat 8 y 9** miden temperatura de superficie y reflectancia en el mismo instante, pero llegan como **números enteros (DN)**: hay que **calibrarlos** (temperatura = DN x 0,00341802 + 149 K; reflectancia = DN x 0,0000275 - 0,2) y comprobar la calibración.
 # * La serie es **irregular**: un paso cada 8 días, de los cuales solo unos 10 a 25 al año salen sin nubes, con menos dato en invierno (sesgo de cielo despejado) y huecos de más de 100 días.
-# * La máscara de nubes **no ve todo**: la reflectancia (roja o SWIR1 altas sobre agua) delata las nubes que se colaron y que producen "agua muy fría" falsa. Descartarlas con una regla simple y declarada es parte del método.
+# * La máscara de nubes **no ve todo**: la reflectancia (roja o SWIR1 altas sobre agua) delata las nubes que se colaron y que producen "agua muy fría" falsa. Descartarlas con una regla declarada es parte del método.
 # * No se puede aplicar tal cual el método de Hobday (necesita una serie diaria y 30 años). Se adapta la idea: **climatología con una ventana de 31 días**, umbrales p90 y p10, y **episodios** de 2 observaciones seguidas, sin cruzar huecos de más de 24 días. La duración es una cota mínima y la tabla **subestima** la frecuencia real; además el muestreo cambió en 2022 (Landsat 9), así que el conteo de episodios no sirve para ver tendencias.
 # * Agua y tierra se separan con la reflectancia calibrada (NDWI, NDVI); la tierra tiene un ciclo anual de temperatura mucho más amplio, por eso cada punto usa su propia climatología.
 # * **Isolation Forest** marca observaciones raras en toda la serie, y con Landsat puede usar **varias variables a la vez**. Comparte solo parte de lo que marca el umbral: son preguntas distintas.
@@ -814,7 +814,7 @@ print([k.decode() for k in pq.read_schema(ruta_episodios).metadata if k != b"pan
 #
 # ### Para el siguiente bloque
 #
-# En el bloque 8 refactorizaremos este código en funciones, lo versionaremos con Git y lo subiremos a GitHub. Lo que guardaste en esta sesión (`episodios_landsat_concepcion.parquet`) es un buen candidato para publicar en el bloque 9.
+# En el bloque 8 refactorizaremos este código en funciones, lo versionaremos con Git y lo subiremos a GitHub. Lo que guardaste en esta sesión (`episodios_landsat_concepcion.parquet`) es un candidato para publicar en el bloque 9.
 #
 # **Referencias**
 #
