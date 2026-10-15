@@ -17,3 +17,5 @@ mcp
 
 # Bloque 6: gráficos interactivos (usa bokeh y holoviews, que Colab ya trae)
 hvplot
+# jupyter_bokeh: sin él, los menús de groupby de hvplot fallan en Colab
+jupyter_bokeh

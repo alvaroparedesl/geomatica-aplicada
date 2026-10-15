@@ -19,7 +19,7 @@
 # %% [markdown]
 # ## Preparar el entorno
 #
-# La celda `Preparar entorno` clona el repositorio del curso (para usar `utils/`). **`hvplot` no viene en Colab**, así que la celda siguiente lo instala, solo si falta (usa `bokeh`, `holoviews` y `panel`, que Colab ya trae). Puede tardar un minuto.
+# La celda `Preparar entorno` clona el repositorio del curso (para usar `utils/`). **`hvplot` y `jupyter_bokeh` no vienen en Colab**, así que la celda siguiente los instala, solo si falta alguno (`hvplot` usa `bokeh`, `holoviews` y `panel`, que Colab ya trae; `jupyter_bokeh` permite mostrar los menús de `groupby`). Puede tardar un minuto.
 
 # %%
 # @title Preparar entorno (ejecutar primero)
@@ -40,16 +40,17 @@ sys.path.insert(0, str(RAIZ))
 DATOS = RAIZ / "talleres" / "fair-series-temporales" / "datos"  # carpeta con los archivos de datos del taller
 
 # %%
-# @title Instalar hvplot (solo si falta)
+# @title Instalar hvplot y jupyter_bokeh (solo si falta alguno)
 import importlib.util
 
-if importlib.util.find_spec("hvplot") is None:
+NECESARIOS = ["hvplot", "jupyter_bokeh"]  # hvplot hace los gráficos; jupyter_bokeh muestra los menús de groupby
+if any(importlib.util.find_spec(modulo) is None for modulo in NECESARIOS):
     requisitos = [linea.strip() for linea in (RAIZ / "talleres/fair-series-temporales/requirements.txt").read_text().splitlines()
                   if linea.strip() and not linea.startswith("#")]
-    subprocess.run([sys.executable, "-m", "pip", "install", "-q", *[r for r in requisitos if r.split()[0] == "hvplot"]], check=True)
-    print("hvplot instalado")
+    subprocess.run([sys.executable, "-m", "pip", "install", "-q", *[r for r in requisitos if r.split()[0] in NECESARIOS]], check=True)
+    print("hvplot y jupyter_bokeh instalados")
 else:
-    print("hvplot ya está instalado")
+    print("hvplot y jupyter_bokeh ya están instalados")
 
 # %%
 # @title Importar bibliotecas
@@ -62,6 +63,7 @@ import hvplot
 import hvplot.pandas  # noqa: F401  (activa el accesor .hvplot de pandas)
 import matplotlib.pyplot as plt
 import pandas as pd
+from IPython.display import HTML, display
 
 # Funciones de apoyo del curso (carpeta utils/)
 from utils.series import cargar_puntos_csv
@@ -69,7 +71,7 @@ from utils.viz import mapa_puntos, serie_interactiva
 
 hvplot.extension("bokeh")  # el motor de gráficos interactivos que usamos
 
-# Una paleta que se distingue bien con daltonismo (Okabe-Ito), un color por punto
+# Una paleta que se distingue con daltonismo (Okabe-Ito), un color por punto
 PALETA = ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9"]
 
 # %% [markdown]
@@ -84,7 +86,7 @@ print(f"{len(tabla)} filas, {tabla['id'].nunique()} puntos, {tabla['fecha'].min(
 # %% [markdown]
 # ## 1. Buenas prácticas para gráficos de series ambientales
 #
-# Mira primero un gráfico **mejorable** de los mismos datos (reflectancia roja de dos puntos), y después el corregido. Los dos usan exactamente la misma tabla.
+# Mira primero un gráfico **mejorable** de los mismos datos (reflectancia roja de dos puntos), y después el corregido. Los dos usan la misma tabla.
 
 # %%
 dos = ["biobio_pluma", "bahia_concepcion"]
@@ -129,7 +131,7 @@ plt.show()
 # 1. **Cada eje con nombre y unidades.** Un título que diga qué se ve, no solo la variable.
 # 2. **Marca las observaciones** (marcadores) cuando las fechas son irregulares, y **no unas ni rellenes los vacíos** sin decirlo: un vacío es información.
 # 3. **Un color por punto, el mismo en todo el cuaderno**, y una paleta apta para daltonismo (Okabe-Ito, ColorBrewer). Etiqueta las líneas directamente o con leyenda.
-# 4. **Eje Y honesto.** Si comparas puntos, elige la misma escala o dilo. No cortes el eje de forma que exagere un cambio pequeño.
+# 4. **Eje Y que no exagere los cambios.** Si comparas puntos, elige la misma escala o dilo. No cortes el eje de modo que un cambio pequeño parezca grande.
 # 5. **Muestra la incertidumbre y la calidad**: cuántos píxeles válidos hay detrás, o qué fechas tienen pocos datos.
 # 6. **Un gráfico, una idea.** Con varias variables, paneles pequeños con el eje X compartido antes que dos ejes Y.
 # 7. **Cita la fuente** y el procesamiento (aquí: Sentinel-2, mediana en una ventana de 150 m).
@@ -175,7 +177,7 @@ grafico = tabla.hvplot.line(
 grafico
 
 # %% [markdown]
-# Pasa el cursor por un punto: además del valor, el cuadro muestra las nubes de la escena y la fracción de la ventana válida. Poner **la calidad del dato en el tooltip** es una de las mejores ventajas de un gráfico interactivo.
+# Pasa el cursor por un punto: además del valor, el cuadro muestra las nubes de la escena y la fracción de la ventana válida. Poner **la calidad del dato en el tooltip** es una de las ventajas de un gráfico interactivo.
 #
 # Los gráficos de `hvplot` se **combinan** con `*` (uno sobre otro) y `+` (uno junto a otro). Por ejemplo, las observaciones de la pluma del Biobío con su media móvil de 30 días (`rolling`, del bloque 5):
 
@@ -195,13 +197,13 @@ suavizada = df_pluma.dropna(subset=["media móvil 30 d"]).hvplot.line(x="fecha",
 tabla.hvplot.line(x="fecha", y="ndci", by="id", subplots=True, width=430, height=230, ylabel="NDCI", xlabel="", shared_axes=True).cols(2)
 
 # %% [markdown]
-# Con `groupby="id"` en vez de `by="id"` obtienes **un solo gráfico con un menú desplegable** para elegir el punto. Ese menú es un widget de `panel`: en Colab a veces se comporta distinto que en Jupyter, así que si no aparece o no responde, no te quedes pegado: usa `by` o `subplots`.
+# Con `groupby="id"` en vez de `by="id"` obtienes **un solo gráfico con un menú desplegable** para elegir el punto. Ese menú es un widget de `panel` y necesita `jupyter_bokeh`, que instalaste arriba. Si aun así no aparece o no responde, usa `by` o `subplots`.
 
 # %%
 tabla.hvplot.line(x="fecha", y="ndvi", groupby="id", width=800, height=330, ylabel="NDVI", title="NDVI (elige el punto)")
 
 # %% [markdown]
-# Un gráfico se puede guardar como un archivo HTML **independiente**, que cualquiera abre en el navegador sin Python. Es una buena forma de compartir un resultado (y de agregarlo a tu repositorio y a tu depósito en el bloque 9).
+# Un gráfico se puede guardar como un archivo HTML **independiente**, que cualquiera abre en el navegador sin Python. Sirve para compartir un resultado (y de agregarlo a tu repositorio y a tu depósito en el bloque 9).
 
 # %%
 ruta_html = Path(tempfile.gettempdir()) / "b04_por_punto.html"
@@ -264,7 +266,7 @@ def popup_punto(fila):
             f"<img src='data:image/png;base64,{miniatura_png(fila.id, variable)}' width='290'>")
 
 
-print(resumen_html("humedal_rocuant"))
+display(HTML(resumen_html("humedal_rocuant")))  # HTML() lo muestra como tabla, no como código
 
 # %% [markdown]
 # Y el mapa. Cada punto es un `folium.CircleMarker`; el popup es un `folium.Popup` con el HTML de `popup_punto`.
@@ -324,7 +326,7 @@ tres.hvplot.scatter(x="fecha", y="b04", by="id", width=900, height=380, size=35,
 #
 # 1. En la serie, la pluma sube en noviembre y diciembre y en agosto y septiembre, y en otoño es parecida a las demás. Eso es compatible con más aporte del río, pero hay otras explicaciones (viento, reflejo del sol). Para confirmar harían falta lluvia y caudal de estaciones de la Dirección General de Aguas o de la Dirección Meteorológica.
 # 2. El valor más alto es del golfo de Arauco, en enero, con una escena casi sin nubes y la ventana completa válida. No lo explica la máscara: hay que mirar la imagen (espuma, un barco, un reflejo) antes de llamarlo evento.
-# 3. En invierno el NDCI de las bahías baja mucho, pero hay pocas fechas y el agua es muy oscura, así que la razón es inestable: no es una conclusión.
+# 3. En invierno el NDCI de las bahías baja mucho, pero hay pocas fechas y el agua es oscura, así que la razón es inestable: no es una conclusión.
 # 4. El NDVI del humedal varía poco (entre 0,5 y 0,6). Una ventana de 300 m resume muchos píxeles y evita que una sola celda con sombra o con agua distorsione el valor.
 # </details>
 #
@@ -333,7 +335,7 @@ tres.hvplot.scatter(x="fecha", y="b04", by="id", width=900, height=380, size=35,
 # %% [markdown]
 # ## Cierre
 #
-# * Un buen gráfico estático primero, luego interactivo: ejes con nombre y unidades, vacíos a la vista, color consistente.
+# * Primero el gráfico estático, luego el interactivo: ejes con nombre y unidades, vacíos a la vista, color consistente.
 # * `hvplot` da zoom, tooltip y filtrado casi sin código; pon la **calidad del dato** (nubes, píxeles válidos) en el tooltip.
 # * `folium` hace un mapa donde cada punto cuenta su propia historia en un popup.
 # * Una interpretación es una **hipótesis**: dice qué dato faltaría para confirmarla.
