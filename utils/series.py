@@ -169,7 +169,7 @@ def agregar_nubes_escena(datos, items):
 
 
 def cargar_ventanas(items, puntos, bandas=None, radio_m=150, resolucion=10, crs=None, catalogo=None,
-                    trabajadores=8, reintentos=2, verbose=True):
+                    trabajadores=8, reintentos=2, verbose=True, **kwargs):
     """
     Carga una ventana de Sentinel-2 alrededor de cada punto, con todas las fechas.
 
@@ -192,6 +192,8 @@ def cargar_ventanas(items, puntos, bandas=None, radio_m=150, resolucion=10, crs=
             hacer que el servidor rechace alguna lectura.
         reintentos (int): Veces que se repite la lectura completa si una lectura falla.
         verbose (bool): Si es True, informa cada punto.
+        **kwargs: Argumentos extra para `odc.stac.load`, por ejemplo `fail_on_error=False`
+            (ver `utils.stac.parametros_carga`).
 
     Returns:
         dict: `{id del punto: xarray.Dataset}` con dimensiones (time, y, x), las
@@ -214,7 +216,7 @@ def cargar_ventanas(items, puntos, bandas=None, radio_m=150, resolucion=10, crs=
         items_p = items_de_punto(items, bbox)
         if not items_p:
             raise ValueError(f"Ninguna imagen cubre el punto {p.id!r}: revisa la búsqueda o las coordenadas.")
-        parametros = parametros_carga("sentinel-2", bandas, resolucion, crs, catalogo, bbox, chunks=CHUNKS_VENTANA)
+        parametros = parametros_carga("sentinel-2", bandas, resolucion, crs, catalogo, bbox, chunks=CHUNKS_VENTANA, **kwargs)
         datos = odc.stac.load(items_p, **parametros)
         datos = renombrar_bandas(datos, catalogo)
         datos = agregar_offset(datos, items_p)
@@ -557,7 +559,7 @@ def agregar_atributos_landsat(datos, items):
 
 
 def cargar_ventanas_landsat(items, puntos, radio_m=200, resolucion=30, crs=None, trabajadores=8,
-                            reintentos=2, verbose=True):
+                            reintentos=2, verbose=True, **kwargs):
     """
     Carga una ventana de Landsat 8/9 alrededor de cada punto, con todas las fechas.
 
@@ -576,6 +578,8 @@ def cargar_ventanas_landsat(items, puntos, radio_m=200, resolucion=30, crs=None,
         trabajadores (int): Lecturas en paralelo.
         reintentos (int): Veces que se repite la lectura completa si una lectura falla.
         verbose (bool): Si es True, informa cada punto.
+        **kwargs: Argumentos extra para `odc.stac.load`, por ejemplo `fail_on_error=False`
+            (ver `utils.stac.parametros_carga`).
 
     Returns:
         dict: `{id del punto: xarray.Dataset}` con dimensiones (time, y, x), bandas en DN y
@@ -598,7 +602,7 @@ def cargar_ventanas_landsat(items, puntos, radio_m=200, resolucion=30, crs=None,
         items_p = items_de_punto(items, bbox)
         if not items_p:
             raise ValueError(f"Ninguna imagen cubre el punto {p.id!r}: revisa la búsqueda o las coordenadas.")
-        parametros = parametros_carga("landsat", bandas, resolucion, crs, "planetary", bbox, chunks=CHUNKS_VENTANA)
+        parametros = parametros_carga("landsat", bandas, resolucion, crs, "planetary", bbox, chunks=CHUNKS_VENTANA, **kwargs)
         datos = agregar_atributos_landsat(odc.stac.load(items_p, **parametros), items_p)
         perezosas[p.id] = datos
         if verbose:

@@ -640,7 +640,7 @@ def agrupar_por_dia_y_offset(item, parsed=None, idx=None):
     return (_dia_solar(item).isoformat(), offset_sentinel2(item))
 
 
-def parametros_carga(sensor, bandas, resolucion, crs, catalogo=None, bbox=None, chunks=None):
+def parametros_carga(sensor, bandas, resolucion, crs, catalogo=None, bbox=None, chunks=None, **kwargs):
     """
     Argumentos para `odc.stac.load(items, **parametros)` (no carga nada).
 
@@ -667,12 +667,25 @@ def parametros_carga(sensor, bandas, resolucion, crs, catalogo=None, bbox=None, 
             se incluye en los parámetros.
         chunks (dict, optional): Por ejemplo {"x": 1024, "y": 1024} para carga
             perezosa con dask. Si es None se carga todo en memoria.
+        **kwargs: Cualquier otro argumento de `odc.stac.load` (por ejemplo
+            `fail_on_error=False` para saltar archivos dañados). Se agregan al
+            diccionario y, si coinciden con uno que arma la función, lo reemplazan.
+            En Sentinel-2 no se acepta `groupby`: es lo que impide mezclar en una
+            fecha imágenes con offsets de reflectancia distintos.
 
     Returns:
         dict: Argumentos para `odc.stac.load`.
+
+    Raises:
+        ValueError: Si se pasa `groupby` con Sentinel-2.
     """
     config = obtener_configuracion_sensor(sensor)
     es_s2 = config["coleccion"].startswith("sentinel-2")
+    if es_s2 and "groupby" in kwargs:
+        raise ValueError(
+            "En Sentinel-2 no se puede cambiar `groupby`: agrupar_por_dia_y_offset evita mezclar en una fecha "
+            "imágenes con offsets de reflectancia distintos."
+        )
     if es_s2:
         nombre = _nombre_catalogo(catalogo)
     else:
@@ -694,6 +707,7 @@ def parametros_carga(sensor, bandas, resolucion, crs, catalogo=None, bbox=None, 
     parametros["groupby"] = agrupar_por_dia_y_offset if es_s2 else "solar_day"
     if nombre == "planetary":
         parametros["patch_url"] = firmar_url
+    parametros.update(kwargs)
     return parametros
 
 

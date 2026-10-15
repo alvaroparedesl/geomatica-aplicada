@@ -102,7 +102,7 @@ guardarla y `herramientas`/`usar` siguen funcionando.
 | `parametros_busqueda(sensor, bbox, fechas, nubes_max, catalogo)` | Diccionario para `catalogo.search(**parametros)`: colección, bbox, fechas y filtro `query`. No busca nada |
 | `preparar_items(items)` | Quita versiones duplicadas de una toma Sentinel-2, rechaza catálogos mezclados o desactivados y ordena por fecha |
 | `resumir_imagenes(items)` | Tabla con fecha, % de nubes e id (+ baseline y offset en Sentinel-2) |
-| `parametros_carga(sensor, bandas, resolucion, crs, catalogo, bbox, chunks)` | Diccionario para `odc.stac.load(items, **parametros)`: nombres de banda del catálogo, `crs`, `resolution`, `chunks`, `patch_url` (firma de Planetary Computer) y `groupby`. No carga nada |
+| `parametros_carga(sensor, bandas, resolucion, crs, catalogo, bbox, chunks, **kwargs)` | Diccionario para `odc.stac.load(items, **parametros)`: nombres de banda del catálogo, `crs`, `resolution`, `chunks`, `patch_url` (firma de Planetary Computer) y `groupby`. Los `**kwargs` (por ejemplo `fail_on_error=False`) se agregan tal cual; en Sentinel-2 no se acepta `groupby`. No carga nada |
 | `agrupar_por_dia_y_offset(item)` | El `groupby` de Sentinel-2: agrupa por (día solar, offset), así nunca se mezclan offsets distintos en una fecha |
 | `renombrar_bandas(datos, catalogo)` | Deja las bandas de Earth Search como B02, B04, B08, SCL (en Planetary Computer no cambia nada) |
 | `agregar_offset(datos, items)` | Agrega la coordenada `offset_reflectancia` (un valor por fecha) a lo que cargó `odc.stac.load` |
@@ -173,7 +173,7 @@ pesados (odc.stac, geopandas, pyarrow, scipy) están dentro de las funciones.
 | `items_de_punto(items, bbox)` | Los ítems cuya huella toca la ventana de un punto |
 | `crs_utm(lon, lat)` | CRS UTM de la zona de un punto (Concepción: EPSG:32718) |
 | `agregar_nubes_escena(datos, items)` | Coordenada `nubes_escena` (% de nubes de la escena por fecha), como `agregar_offset` |
-| `cargar_ventanas(items, puntos, bandas, radio_m, resolucion, crs, catalogo)` | Para cada punto: `bbox_punto`, `parametros_carga`, `odc.stac.load`, `renombrar_bandas`, `agregar_offset`, `agregar_nubes_escena`; devuelve `{id: Dataset}` leído en paralelo. Los pasos están en el docstring del módulo para que un cuaderno los escriba a la vista |
+| `cargar_ventanas(items, puntos, bandas, radio_m, resolucion, crs, catalogo, **kwargs)` | Para cada punto: `bbox_punto`, `parametros_carga`, `odc.stac.load`, `renombrar_bandas`, `agregar_offset`, `agregar_nubes_escena`; devuelve `{id: Dataset}` leído en paralelo. Los pasos están en el docstring del módulo para que un cuaderno los escriba a la vista |
 | `construir_series(ventanas, puntos, radio_m, estadistico, fraccion_minima)` | Máscara SCL + reflectancia con el offset de cada fecha + NDWI, NDCI, B04 y NDVI + mediana de la ventana. Tabla ancha `COLUMNAS_SERIES` |
 | `resumen_validez(tabla, variable)` | Fechas con cobertura y fechas válidas por punto |
 | `guardar_series(tabla, ruta, metadatos)`, `cargar_series(origen)`, `leer_metadatos_series(origen)` | Parquet con metadatos dentro del archivo |
@@ -192,7 +192,7 @@ observaciones por mes: sirve para ver el ciclo, no para anomalías robustas
 ### `utils/series.py`: Landsat 8 y 9
 | Función | Qué hace |
 |---|---|
-| `cargar_ventanas_landsat(items, puntos, radio_m, resolucion)` | Una ventana de Landsat alrededor de cada punto con todas las fechas (verde, rojo, NIR, SWIR1, `lwir11`, `qa_pixel`, `qa_radsat`, en DN). Mismo patrón que `cargar_ventanas` |
+| `cargar_ventanas_landsat(items, puntos, radio_m, resolucion, **kwargs)` | Una ventana de Landsat alrededor de cada punto con todas las fechas (verde, rojo, NIR, SWIR1, `lwir11`, `qa_pixel`, `qa_radsat`, en DN). Mismo patrón que `cargar_ventanas`; los `**kwargs` van a `odc.stac.load` |
 | `construir_series_landsat(ventanas, puntos, radio_m, fraccion_minima)` | Máscara, **calibración** (temperatura y reflectancia), NDWI y NDVI, y mediana de la ventana. Una fila por punto y fecha; las fechas con nubes se conservan con NaN |
 | `agregar_atributos_landsat(datos, items)` | Agrega la plataforma (landsat-8 o landsat-9) y las nubes de la escena a cada fecha |
 
