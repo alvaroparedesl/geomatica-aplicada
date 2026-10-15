@@ -3,7 +3,7 @@
 #
 # [![Abrir en Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/alvaroparedesl/geomatica-aplicada/blob/main/talleres/fair-series-temporales/07_eventos_extremos.ipynb) [![Licencia: GPL-3.0](https://img.shields.io/badge/licencia-GPL--3.0-blue.svg)](https://github.com/alvaroparedesl/geomatica-aplicada/blob/main/LICENSE) [![Python 3.13](https://img.shields.io/badge/python-3.13-blue.svg)](https://colab.research.google.com/)
 #
-# **Bloque 7 del taller "Datos FAIR, series temporales satelitales y detección de anomalías con Python"** (unos 100 minutos).
+# **Bloque 7 del taller "Datos FAIR, series temporales satelitales y detección de anomalías con Python"** (unos 90 minutos).
 #
 # Hasta aquí calculaste anomalías: cuánto se aleja un valor de lo normal para esa época del año. Ahora damos el paso siguiente: **decidir cuándo una anomalía es un episodio extremo**. Lo haremos con la **temperatura de superficie de Landsat 8 y 9** en el agua de la bahía de Concepción y sus alrededores, con una serie de más de 13 años y una pregunta: ¿hubo episodios anormalmente cálidos o fríos, cuáles fueron los más importantes y ocurre alguno ahora?
 #
@@ -16,8 +16,7 @@
 # 3. Construir **paso a paso, en pandas, una climatología** que funciona con pocas observaciones (la idea de Hobday, adaptada).
 # 4. Detectar **episodios** de observaciones anómalas seguidas, sin cruzar huecos largos.
 # 5. Usar lo que Landsat tiene de especial: **temperatura y reflectancia en el mismo instante** (agua frente a tierra, turbidez).
-# 6. Comparar los umbrales clásicos con **Isolation Forest** (aprendizaje automático), también con varias variables a la vez.
-# 7. Mapear la **frecuencia de anomalías** en una malla de 500 m.
+# 6. Comparar los umbrales clásicos con **Isolation Forest** (aprendizaje automático), también con varias variables a la vez, y ver el patrón de anomalías en un mapa.
 #
 # | Parte | Minutos |
 # |---|---|
@@ -26,13 +25,12 @@
 # | Climatología por ventana | 15 |
 # | Episodios | 15 |
 # | Agua, tierra y reflectancia | 10 |
-# | Isolation Forest | 15 |
-# | Mapa de frecuencia | 10 |
+# | Isolation Forest y mapa de frecuencia | 20 |
 
 # %% [markdown]
 # ## Configuración del entorno
 #
-# La celda `Preparar entorno` deja disponible la carpeta `utils/` del curso y la variable `DATOS`, la carpeta con los archivos de datos del taller. Esta vez usamos `utils/extremos.py` (control de calidad, climatología, episodios, Isolation Forest y la malla), `utils/series.py` (la tabla de Landsat y el guardado de resultados), `utils/stac.py` (los parámetros de carga) y `utils/raster.py` (la comprobación de la calibración). La lectura de los datos, las series de cada punto y la conexión al catálogo las escribes tú con pandas, xarray y `pystac_client`.
+# La celda `Preparar entorno` deja disponible la carpeta `utils/` del curso y la variable `DATOS`, la carpeta con los archivos de datos del taller. Esta vez usamos `utils/extremos.py` (control de calidad, climatología, episodios y comparación de marcas), `utils/series.py` (la tabla de Landsat y el guardado de resultados), `utils/stac.py` (los parámetros de carga) y `utils/raster.py` (la comprobación de la calibración). La lectura de los datos, las series de cada punto y la conexión al catálogo las escribes tú con pandas, xarray y `pystac_client`.
 
 # %%
 # @title Preparar entorno (ejecutar primero)
@@ -81,13 +79,12 @@ import planetary_computer
 import pyarrow.parquet as pq
 import xarray as xr
 from IPython.display import display
-from pyproj import Transformer
 from pystac_client import Client
+from sklearn.ensemble import IsolationForest
 
 # Funciones de apoyo del curso (carpeta utils/)
-from utils.extremos import (aislamiento_forest_observaciones, anomalia_malla, anomalias_observaciones,
-                            climatologia_malla, climatologia_ventana, controlar_calidad_agua, detectar_episodios,
-                            episodios_por_punto, frecuencia_anomalias_malla, resumen_eventos, solapamiento)
+from utils.extremos import (anomalias_observaciones, climatologia_ventana, controlar_calidad_agua, detectar_episodios,
+                            episodios_por_punto, resumen_eventos, solapamiento)
 from utils.series import (agregar_atributos_landsat, bbox_punto, cargar_ventanas_landsat, construir_series_landsat,
                           guardar_series)
 from utils.stac import parametros_carga
@@ -593,7 +590,7 @@ pd.DataFrame(filas).set_index("punto")
 #
 # **Isolation Forest** (bosque de aislamiento) es un método de detección de atípicos no supervisado. Construye muchos árboles de decisión con cortes aleatorios; los puntos raros quedan aislados con pocos cortes, los comunes necesitan muchos. No usa umbrales ni conoce el calendario: solo ve números. Por eso le damos **anomalías** (que ya no tienen estacionalidad) en vez de temperaturas.
 #
-# La novedad con Landsat: podemos darle **varias variables a la vez**. `aislamiento_forest_observaciones` le entrega a cada observación la anomalía de la temperatura, de la reflectancia roja y del NDWI. Hay que fijar la **contaminación**: la fracción de observaciones que se espera atípicas (aquí 10 %).
+# La novedad con Landsat: podemos darle **varias variables a la vez**. Le entregamos a cada observación la anomalía de la temperatura, de la reflectancia roja y del NDWI (solo las fechas con las tres variables, porque el bosque no admite `NaN`). `IsolationForest` de scikit-learn da un `puntaje` (menor = más raro) y marca como atípicas las observaciones con los puntajes más bajos. Hay que fijar la **contaminación**: la fracción de observaciones que se espera atípicas (aquí 10 %).
 
 # %%
 variables = ["st_c", "rojo", "ndwi"]
@@ -601,8 +598,20 @@ de_punto = tabla_qc[tabla_qc["id"] == PUNTO].set_index("fecha")
 obs = de_punto[variables].astype(float)
 clima_vars = {v: climatologia_ventana(obs[v]) for v in variables}
 
-solo_temperatura = aislamiento_forest_observaciones(obs, ["st_c"], clima_vars, contaminacion=0.1)
-multivariable = aislamiento_forest_observaciones(obs, variables, clima_vars, contaminacion=0.1)
+anom_vars = pd.DataFrame({v: anomalias_observaciones(obs[v], clima_vars[v])["anomalia"] for v in variables})   # anomalía de cada variable
+
+
+def aislar(columnas, contaminacion=0.1):
+    X = anom_vars[columnas].dropna()                                  # solo fechas con todas las variables
+    bosque = IsolationForest(n_estimators=200, contamination=contaminacion, random_state=0).fit(X)
+    salida = anom_vars[columnas].copy()                               # mismo índice de fechas que la serie
+    salida["puntaje"] = pd.Series(bosque.score_samples(X), index=X.index)
+    salida["atipico"] = pd.Series(bosque.predict(X) == -1, index=X.index).reindex(salida.index, fill_value=False)
+    return salida
+
+
+solo_temperatura = aislar(["st_c"])
+multivariable = aislar(variables)
 print(f"Observaciones con las tres variables: {int(multivariable['puntaje'].notna().sum())}")
 print(f"Atípicas con solo temperatura: {int(solo_temperatura['atipico'].sum())} | con las tres variables: {int(multivariable['atipico'].sum())}")
 multivariable.nsmallest(5, "puntaje").round(3)
@@ -650,7 +659,7 @@ plt.show()
 # %%
 filas = []
 for contaminacion in (0.05, 0.1, 0.2, 0.3):
-    f = aislamiento_forest_observaciones(obs, variables, clima_vars, contaminacion=contaminacion)
+    f = aislar(variables, contaminacion)
     filas.append({"contaminación": contaminacion, "observaciones atípicas": int(f["atipico"].sum()),
                   "Jaccard con el umbral": round(solapamiento(marca_umbral, f["atipico"])["jaccard"], 2)})
 pd.DataFrame(filas).set_index("contaminación")
@@ -677,68 +686,42 @@ pd.DataFrame(filas).set_index("contaminación")
 # El método de Hobday et al. (2016) es el estándar para **olas de calor marinas** (5 días seguidos sobre el p90 durante 30 años de base). Necesita una serie **diaria sin huecos** y larga, como los productos de temperatura del mar que interpolan satélites, boyas y barcos. **Landsat no sirve** para eso: pasa cada 8 días, las nubes borran muchas fechas y solo tiene 13 años. Por eso aquí trabajamos con **episodios** y no con "olas de calor marinas": usar el mismo nombre sería prometer más de lo que los datos permiten. `utils/extremos.py` conserva el método de Hobday (`climatologia_hobday`, `detectar_eventos`), validado contra la librería `xmhw`, por si tienes una serie diaria.
 
 # %% [markdown]
-# ## 7. Mapa de frecuencia de anomalías en una malla de 500 m
+# ### Del punto al mapa: frecuencia de anomalías en una malla de 500 m
 #
-# Hasta ahora miramos puntos. Landsat da imágenes: la malla preparada (`landsat_malla_concepcion.nc`) tiene la **temperatura de superficie cada 500 m** en un cuadrado de 0,8 grados alrededor de la bahía de Concepción y el golfo de Arauco, para todas las fechas con al menos 10 % de píxeles válidos. Es una **muestra de un píxel cada 500 m** (sin promediar), con nubes como `NaN`.
+# Hasta aquí miramos puntos. Landsat da imágenes: la malla preparada (`landsat_malla_concepcion.nc`) tiene la **temperatura de superficie cada 500 m** (una muestra de un píxel, sin promediar, con nubes como `NaN`) en un cuadrado de 0,8 grados alrededor de la bahía de Concepción y el golfo de Arauco. Repetimos la idea de los umbrales en **cada píxel**, de la forma más directa: el p90 y el p10 de cada **mes** del año en el periodo base 2013-2024 (con al menos 8 observaciones) y la fracción de las observaciones de **2025 y 2026** que los supera. Por construcción, en el periodo base esa fracción es cercana a **0,10**; un valor mayor en 2025-2026 indica que ese píxel estuvo más cálido (o más frío) de lo normal.
+#
+# La malla no tiene el control de calidad con la reflectancia, porque solo guarda la banda térmica. Hacemos uno **declarado**: en esta zona, a media mañana, ni el mar ni la tierra bajan de unos 3 °C, así que descartamos lo que está bajo ese valor (casi todo son nubes muy frías que la máscara no marcó). El cálculo tarda unos 30 segundos.
 
 # %%
 with xr.open_dataset(DATOS / "landsat_malla_concepcion.nc") as ds:
-    malla_bruta = ds["st_c"].load().astype("float32")      # cargar en memoria antes de cerrar el archivo
-print(malla_bruta.sizes, "| fechas:", str(malla_bruta["time"].values[0])[:10], "a", str(malla_bruta["time"].values[-1])[:10])
-print(f"Mínimo de la malla: {float(malla_bruta.min()):.1f} °C | máximo: {float(malla_bruta.max()):.1f} °C")
+    malla = ds["st_c"].load().astype("float32")            # cargar en memoria antes de cerrar el archivo
+malla = malla.where(malla >= 3)                            # nubes sin marcar: bajo 3 °C no hay agua ni suelo en esta zona
 
-# %% [markdown]
-# **Un mínimo de -43 °C no es una temperatura del suelo ni del agua de Concepción**: es justo el piso de la calibración (230 K), el valor de una nube muy fría que la máscara no marcó (las más frías ya quedaron como NaN). La malla (a diferencia de la tabla por punto) no tiene el control de calidad con la reflectancia, porque solo guarda la banda térmica. Hacemos un control **declarado**: en esta zona, a esa hora (media mañana), ni el mar ni la tierra bajan de unos 3 °C, así que descartamos lo que está bajo ese valor.
+# Umbrales de cada píxel y de cada mes (base 2013-2024); con menos de 8 observaciones, sin umbral
+base = malla.sel(time=slice("2013", "2024"))
+n_base = base.notnull().groupby("time.month").sum("time")
+with warnings.catch_warnings():
+    warnings.simplefilter("ignore")                        # píxeles sin ninguna observación: "All-NaN slice"
+    p90 = base.groupby("time.month").quantile(0.9, "time").where(n_base >= 8)
+    p10 = base.groupby("time.month").quantile(0.1, "time").where(n_base >= 8)
 
-# %%
-muy_frio = (malla_bruta < 3).sum() / malla_bruta.notnull().sum()
-print(f"{float(muy_frio):.1%} de los valores son menores que 3 °C: se descartan (casi todos nubes sin marcar)")
-malla = malla_bruta.where(malla_bruta >= 3)
-validas = malla.notnull().sum("time")
-print(f"Observaciones válidas por píxel: de {int(validas.min())} a {int(validas.max())} (mediana {int(validas.median())})")
+# Fracción de las observaciones de 2025-2026 sobre el p90 (o bajo el p10) del mes en que se tomaron
+reciente = malla.sel(time=slice("2025", "2026"))
+mes = reciente["time"].dt.month
+con_umbral = reciente.notnull() & p90.sel(month=mes).notnull()
+frec_calor = ((reciente > p90.sel(month=mes)) & con_umbral).sum("time") / con_umbral.sum("time")
+frec_frio = ((reciente < p10.sel(month=mes)) & con_umbral).sum("time") / con_umbral.sum("time")
+print("Observaciones de 2025-2026 por píxel: mediana", int(con_umbral.sum("time").median()))
+print(f"Fracción sobre el p90 en 2025-2026: mediana de la malla {float(frec_calor.median()):.2f} (esperado 0,10)")
+print(f"Fracción bajo el p10 en 2025-2026:  mediana de la malla {float(frec_frio.median()):.2f} (esperado 0,10)")
 
-# %%
-# Las coordenadas de los puntos están en grados (EPSG:4326); la malla está en UTM 18 S (EPSG:32718)
-a_utm = Transformer.from_crs("EPSG:4326", "EPSG:32718", always_xy=True)
-puntos_xy = {fila.id: a_utm.transform(fila.lon, fila.lat) for fila in tabla.drop_duplicates("id").itertuples()}
-verano = malla.sel(time=malla["time"].dt.month.isin([12, 1, 2])).mean("time")
-x_km, y_km = malla["x"] / 1000, malla["y"] / 1000
-
-fig, ejes = plt.subplots(1, 2, figsize=(12, 5.2))
-for ax, datos_mapa, titulo, cmap in ((ejes[0], validas, "Observaciones válidas por píxel", "viridis"),
-                                     (ejes[1], verano, "Temperatura media de verano (dic-feb, °C)", "RdYlBu_r")):
-    imagen = ax.pcolormesh(x_km, y_km, datos_mapa, cmap=cmap, shading="nearest")
-    for nombre, (px, py) in puntos_xy.items():
-        ax.plot(px / 1000, py / 1000, "k^", ms=5, mec="white")
-    ax.set_title(titulo)
-    ax.set_xlabel("este (km, UTM 18 S)")
-    ax.set_aspect("equal")
-    plt.colorbar(imagen, ax=ax, shrink=0.75)
-ejes[0].set_ylabel("norte (km)")
-plt.tight_layout()
-plt.show()
-
-# %% [markdown]
-# Se ve la **costa**: el mar (azul oscuro, a la izquierda) es mucho más frío en verano que la tierra (tonos claros). Las observaciones válidas cambian por zonas: los cortes rectos son los **bordes de las escenas** de Landsat (donde se juntan dos órbitas hay más pasos), y la zona oscura sobre la costa y los valles tiene muy pocas observaciones. En un píxel de esa zona casi no hay observaciones de noviembre a febrero: una hipótesis es que la máscara de nubes de Landsat toma por nube superficies muy brillantes y calientes (techos, arena, suelo desnudo). No lo comprobamos, pero cualquier promedio ahí estaría sesgado hacia los meses fríos. Los triángulos son los puntos del taller.
-#
-# ### Anomalías píxel por píxel
-#
-# `climatologia_malla` calcula la climatología por ventana de días **en cada píxel** (base 2013-2024), y `frecuencia_anomalias_malla` cuenta la fracción de observaciones por encima del p90 (o bajo el p10). Por construcción, en el periodo base esa fracción es cercana a **0,10** en todos los píxeles. Si miramos solo **los últimos años (2025 y 2026)**, una fracción mucho mayor que 0,10 indica que esos píxeles estuvieron más cálidos de lo normal.
-
-# %%
-clima_malla = climatologia_malla(malla, paso=16)             # un centro cada 16 días del año: la curva es suave y así tarda la mitad
-frec_calor = frecuencia_anomalias_malla(malla, clima_malla, "calor", periodo=(2025, 2026))
-frec_frio = frecuencia_anomalias_malla(malla, clima_malla, "frio", periodo=(2025, 2026))
-print("Observaciones de 2025-2026 por píxel: mediana", int(frec_calor["n_obs"].median()))
-print(f"Fracción sobre el p90 en 2025-2026: mediana de la malla {float(frec_calor['fraccion'].median()):.2f} (esperado 0,10)")
-print(f"Fracción bajo el p10 en 2025-2026:  mediana de la malla {float(frec_frio['fraccion'].median()):.2f} (esperado 0,10)")
-
+x_km, y_km = malla["x"] / 1000, malla["y"] / 1000          # la malla está en UTM 18 S (EPSG:32718), en metros
 fig, ejes = plt.subplots(1, 2, figsize=(12, 5), sharey=True)
 for ax, frec, titulo, cmap in ((ejes[0], frec_calor, "Fracción de observaciones sobre el p90", "Reds"),
                                (ejes[1], frec_frio, "Fracción de observaciones bajo el p10", "Blues")):
-    imagen = ax.pcolormesh(x_km, y_km, frec["fraccion"], cmap=cmap, vmin=0, vmax=0.5, shading="nearest")
+    imagen = ax.pcolormesh(x_km, y_km, frec, cmap=cmap, vmin=0, vmax=0.5, shading="nearest")
     ax.set_title(f"{titulo}, 2025-2026")
-    ax.set_xlabel("este (km)")
+    ax.set_xlabel("este (km, UTM 18 S)")
     ax.set_aspect("equal")
     plt.colorbar(imagen, ax=ax, shrink=0.75)
 ejes[0].set_ylabel("norte (km)")
@@ -748,25 +731,13 @@ plt.show()
 # %% [markdown]
 # **Cómo leerlo.**
 #
-# * Con unas **45 observaciones por píxel** en 2025-2026, la fracción tiene un error de unos 0,05 (la raíz de 0,1 x 0,9 / 45): un píxel con 0,2 no es necesariamente "más cálido que lo normal". Mira el patrón espacial (zonas grandes), no píxeles sueltos.
-# * La mediana de la malla es de unos **0,15 para calor y 0,13 para frío**, por encima de 0,10 en los dos casos: 2025 y 2026 tuvieron **más observaciones extremas de los dos signos** que la climatología 2013-2024, no solo más calor.
-# * Tampoco sabemos **por qué**. Un periodo así puede ser clima, nubes que se colaron, el cambio de sensor (Landsat 9 desde 2022) o una climatología base que no es homogénea (Tu turno 4). Es una **hipótesis**, no una demostración.
-#
-# ### Tu turno 4: otra mirada al mapa
-#
-# 1. Cambia el periodo a `(2013, 2018)` y a `(2019, 2024)`. Toda la base juntos da una fracción cercana a 0,10, pero cada mitad no tiene por qué: ¿cuál tiene más observaciones cálidas? ¿Qué te dice eso de qué tan "homogénea" es la climatología?
-# 2. Mapea la **anomalía de la última escena despejada** con `anomalia_malla(malla, clima_malla)`: ¿se parece al patrón de frecuencia?
-# 3. Para comunicar el resultado: ¿cuál de los dos mapas (cálido o frío) le mostrarías a una persona que trabaja en pesca artesanal de la zona y por qué?
-
-# %%
-# Punto de partida: la anomalía de la última escena con más del 50 % de píxeles válidos
-anom = anomalia_malla(malla, clima_malla)
-buena = (anom.notnull().mean(("x", "y")) > 0.5)
-ultima = anom.sel(time=buena[buena].time[-1])
-print("Última escena útil:", str(ultima["time"].values)[:10], "| anomalía mediana:", f"{float(ultima.median()):.2f} °C")
+# * Con unas **44 observaciones por píxel** en 2025-2026, la fracción tiene un error de unos 0,05 (la raíz de 0,1 x 0,9 / 44): un píxel con 0,2 no es necesariamente "más cálido que lo normal". Mira el patrón espacial (zonas grandes), no píxeles sueltos.
+# * La mediana de la malla es de unos **0,15 para calor y 0,14 para frío**, por encima de 0,10 en los dos casos: 2025 y 2026 tuvieron **más observaciones extremas de los dos signos** que la climatología 2013-2024, no solo más calor.
+# * Tampoco sabemos **por qué**. Un periodo así puede ser clima, nubes que se colaron, el cambio de sensor (Landsat 9 desde 2022) o una climatología base que no es homogénea. Es una **hipótesis**, no una demostración.
+# * Los cortes rectos del mapa son los **bordes de las escenas** de Landsat. Si quieres probar: cambia el periodo a `(2013, 2018)` y a `(2019, 2024)` (`slice("2013", "2018")`) y compara. Toda la base junta da una fracción cercana a 0,10, pero cada mitad no tiene por qué: ¿cuál tiene más observaciones cálidas?
 
 # %% [markdown]
-# ## 8. Guardar los resultados
+# ## 7. Guardar los resultados
 #
 # Los episodios detectados son un **dato derivado**: si no los guardamos con su documentación, nadie (ni tú en tres meses) sabrá con qué parámetros salieron. Guardamos una tabla en parquet con los metadatos dentro del archivo, igual que hicimos con la serie de Sentinel-2. En los bloques 8 y 9 lo versionaremos y lo publicaremos.
 
@@ -810,7 +781,7 @@ print([k.decode() for k in pq.read_schema(ruta_episodios).metadata if k != b"pan
 # * No se puede aplicar tal cual el método de Hobday (necesita una serie diaria y 30 años). Se adapta la idea: **climatología con una ventana de 31 días**, umbrales p90 y p10, y **episodios** de 2 observaciones seguidas, sin cruzar huecos de más de 24 días. La duración es una cota mínima y la tabla **subestima** la frecuencia real; además el muestreo cambió en 2022 (Landsat 9), así que el conteo de episodios no sirve para ver tendencias.
 # * Agua y tierra se separan con la reflectancia calibrada (NDWI, NDVI); la tierra tiene un ciclo anual de temperatura mucho más amplio, por eso cada punto usa su propia climatología.
 # * **Isolation Forest** marca observaciones raras en toda la serie, y con Landsat puede usar **varias variables a la vez**. Comparte solo parte de lo que marca el umbral: son preguntas distintas.
-# * En la malla de 500 m, la fracción de observaciones sobre el p90 muestra dónde hubo más anomalías cálidas que en la climatología 2013-2024; con unas 45 observaciones por píxel tiene ruido y hay que mirar patrones, no píxeles.
+# * En la malla de 500 m, la fracción de observaciones sobre el p90 mensual de cada píxel muestra dónde hubo más anomalías cálidas en 2025-2026 que en la climatología 2013-2024; con unas 44 observaciones por píxel tiene ruido y hay que mirar patrones, no píxeles sueltos.
 #
 # ### Para el siguiente bloque
 #
