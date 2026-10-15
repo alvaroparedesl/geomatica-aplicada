@@ -12,6 +12,9 @@ planetary-computer
 odc-stac
 rioxarray
 
+# Bloque 7: leer la malla de Landsat (NetCDF/HDF5). Colab trae netCDF4; en un entorno local hace falta uno de los dos
+h5netcdf
+
 # Bloque 1: cliente MCP (Zenodo, Dataverse, OpenAlex)
 mcp
 
