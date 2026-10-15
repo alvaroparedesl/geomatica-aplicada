@@ -35,6 +35,8 @@ Cada cuaderno se abre directamente en Colab con su botón. La fuente es el archi
 | 8 | [`08_git_reproducibilidad.py`](08_git_reproducibilidad.py): Git y reproducibilidad | [![Abrir en Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/alvaroparedesl/geomatica-aplicada/blob/main/talleres/fair-series-temporales/08_git_reproducibilidad.ipynb) |
 | 9 | [`09_publicacion_zenodo.py`](09_publicacion_zenodo.py): publicación FAIR en Zenodo Sandbox | [![Abrir en Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/alvaroparedesl/geomatica-aplicada/blob/main/talleres/fair-series-temporales/09_publicacion_zenodo.ipynb) |
 
+**Cuaderno completo (opcional).** [`analisis_completo.py`](analisis_completo.py) reúne los bloques 3 a 7 en un solo cuaderno, sin usar `utils/`: cambias tus puntos, fechas y área en la celda de configuración y ejecutas todo el análisis (escena Sentinel-2, serie temporal, exploración, gráficos interactivos y eventos extremos con Landsat). Cada módulo se puede ejecutar por separado. [![Abrir en Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/alvaroparedesl/geomatica-aplicada/blob/main/talleres/fair-series-temporales/analisis_completo.ipynb)
+
 Todos los cuadernos empiezan con la celda **Preparar entorno**, que clona este repositorio en Colab para poder usar la carpeta [`utils/`](../../utils/README.md). Las dependencias adicionales del taller están en [`requirements.txt`](requirements.txt) y cada cuaderno instala lo que falte.
 
 ## Horario

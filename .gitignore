@@ -212,3 +212,6 @@ gdrive_config.json
 
 # Material privado del expositor (no se publica)
 talleres/*/guia_expositor.md
+
+# Resultados que genera el cuaderno analisis_completo al ejecutarlo
+talleres/*/salidas/
