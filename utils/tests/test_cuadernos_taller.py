@@ -15,7 +15,7 @@ y lo compara con `utils.stac.offset_sentinel2`, `utils.stac.agregar_offset` y
   (varias fechas, dos satélites el mismo día y versiones duplicadas de una toma), solo con Planetary Computer.
 * El DN 0 (sin datos) y los valores fuera de 0 a 1 pasan a NaN igual que en `utils`.
 * El cuaderno `analisis_completo` (un solo cuaderno, sin `utils`) repite esas reglas con sus propias funciones
-  (`offset_item`, `grupo_dia_offset`, `quitar_duplicados`, `agregar_metadatos`, `reflectancia_sentinel2`): se
+  (`offset_item`, `group_day_offset`, `remove_duplicates`, `add_metadata`, `reflectance_sentinel2`): se
   comprueba que dan lo mismo que `utils`, incluidas las nubes de escena de cada fecha.
 """
 
@@ -133,8 +133,14 @@ def test_reflectancia_del_cuaderno04_funciona_con_una_sola_fecha(cuaderno04):
 
 
 # ---------------------------------------------------------------- cuaderno analisis_completo: el mismo flujo, sin utils
-FUNCIONES_COMPLETO = ("offset_item", "grupo_dia_offset", "quitar_duplicados", "desempatar_fechas", "agregar_metadatos",
-                      "reflectancia_sentinel2")
+FUNCIONES_COMPLETO = ("offset_item", "group_day_offset", "remove_duplicates", "break_date_ties", "add_metadata",
+                      "reflectance_sentinel2")
+
+
+def _con_nombres_de_utils(cubo):
+    """El cuaderno en inglés llama `reflectance_offset` y `cloud_scene` a las coordenadas que `utils` llama `offset_reflectancia` y `nubes_escena`."""
+    nombres = {"reflectance_offset": COORD_OFFSET, "cloud_scene": "nubes_escena"}
+    return cubo.rename({viejo: nuevo for viejo, nuevo in nombres.items() if viejo in cubo.coords})
 
 
 @pytest.fixture(scope="module")
@@ -149,28 +155,28 @@ def _items_planetary():
 @pytest.mark.parametrize("archivo,item", _items_planetary(), ids=lambda v: v if isinstance(v, str) else v.id[:30])
 def test_offset_item_de_analisis_completo_coincide_con_offset_sentinel2(archivo, item, completo):
     assert completo.offset_item(item) == stac.offset_sentinel2(item), f"{archivo}: {item.id}"
-    assert completo.grupo_dia_offset(item) == stac.agrupar_por_dia_y_offset(item)
+    assert completo.group_day_offset(item) == stac.agrupar_por_dia_y_offset(item)
 
 
 @pytest.mark.parametrize("nombre", ESCENARIOS)
 def test_analisis_completo_deja_las_mismas_imagenes_fechas_y_nubes_que_utils(nombre, completo, tmp_path):
     items = [i for a in ESCENARIOS[nombre] for i in leer_items(a)]
     _localizar(items, tmp_path)
-    assert [i.id for i in completo.quitar_duplicados(items)] == [i.id for i in stac.preparar_items(items, verbose=False)]
+    assert [i.id for i in completo.remove_duplicates(items)] == [i.id for i in stac.preparar_items(items, verbose=False)]
     items = stac.preparar_items(items, verbose=False)
 
     parametros = stac.parametros_carga("sentinel-2", ["B02", "B04", "B08", "SCL"], resolucion=10, crs=EPSG, bbox=_bbox())
     datos = odc.stac.load(items, **parametros)
-    cargado_con_el_cuaderno = odc.stac.load(items, **{**parametros, "groupby": completo.grupo_dia_offset})
+    cargado_con_el_cuaderno = odc.stac.load(items, **{**parametros, "groupby": completo.group_day_offset})
     np.testing.assert_array_equal(cargado_con_el_cuaderno["time"].values, datos["time"].values)  # misma agrupación en fechas
 
-    del_cuaderno = completo.agregar_metadatos(cargado_con_el_cuaderno, items)
+    del_cuaderno = completo.add_metadata(cargado_con_el_cuaderno, items)
     de_utils = agregar_nubes_escena(stac.agregar_offset(datos, items), items)
-    np.testing.assert_array_equal(del_cuaderno[COORD_OFFSET].values, de_utils[COORD_OFFSET].values)
-    np.testing.assert_allclose(del_cuaderno["nubes_escena"].values, de_utils["nubes_escena"].values)
+    np.testing.assert_array_equal(del_cuaderno["reflectance_offset"].values, de_utils[COORD_OFFSET].values)
+    np.testing.assert_allclose(del_cuaderno["cloud_scene"].values, de_utils["nubes_escena"].values)
 
     espectrales = ["B02", "B04", "B08"]
-    xr.testing.assert_allclose(completo.reflectancia_sentinel2(del_cuaderno[espectrales]),
+    xr.testing.assert_allclose(_con_nombres_de_utils(completo.reflectance_sentinel2(del_cuaderno[espectrales])),
                                raster.convertir_a_reflectancia(de_utils[espectrales], "sentinel-2"))
 
 
@@ -184,20 +190,20 @@ def test_analisis_completo_asigna_el_offset_de_dos_tiles_con_la_misma_hora_igual
     reprocesado.properties.update({"s2:mgrs_tile": "19HBT", "s2:processing_baseline": "04.00", "eo:cloud_cover": 50})
     items = _localizar([original, reprocesado], tmp_path)
 
-    del_cuaderno = completo.desempatar_fechas(completo.quitar_duplicados(items))
+    del_cuaderno = completo.break_date_ties(completo.remove_duplicates(items))
     de_utils = stac.preparar_items(items, verbose=False)
     assert [(i.id, i.datetime) for i in del_cuaderno] == [(i.id, i.datetime) for i in de_utils]
     assert original.datetime == reprocesado.datetime  # los ítems de entrada no cambian
 
     parametros = stac.parametros_carga("sentinel-2", ["B02", "B04", "B08", "SCL"], resolucion=10, crs=EPSG, bbox=_bbox())
     datos = odc.stac.load(de_utils, **parametros)
-    cargado = odc.stac.load(del_cuaderno, **{**parametros, "groupby": completo.grupo_dia_offset})
-    con_metadatos = completo.agregar_metadatos(cargado, del_cuaderno)
+    cargado = odc.stac.load(del_cuaderno, **{**parametros, "groupby": completo.group_day_offset})
+    con_metadatos = completo.add_metadata(cargado, del_cuaderno)
     esperado = agregar_nubes_escena(stac.agregar_offset(datos, de_utils), de_utils)
     assert cargado["time"].to_index().is_unique
-    np.testing.assert_array_equal(con_metadatos[COORD_OFFSET].values, esperado[COORD_OFFSET].values)
-    np.testing.assert_allclose(con_metadatos["nubes_escena"].values, esperado["nubes_escena"].values)
-    assert sorted(con_metadatos[COORD_OFFSET].values) == [-0.1, 0.0]
+    np.testing.assert_array_equal(con_metadatos["reflectance_offset"].values, esperado[COORD_OFFSET].values)
+    np.testing.assert_allclose(con_metadatos["cloud_scene"].values, esperado["nubes_escena"].values)
+    assert sorted(con_metadatos["reflectance_offset"].values) == [-0.1, 0.0]
 
-    with pytest.raises(ValueError, match="desempatar_fechas"):  # sin el desempate el cuaderno avisa en vez de dar un offset falso
-        completo.agregar_metadatos(odc.stac.load(items, **{**parametros, "groupby": completo.grupo_dia_offset}), items)
+    with pytest.raises(ValueError, match="break_date_ties"):  # sin el desempate el cuaderno avisa en vez de dar un offset falso
+        completo.add_metadata(odc.stac.load(items, **{**parametros, "groupby": completo.group_day_offset}), items)
